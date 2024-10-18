@@ -1,6 +1,6 @@
 import requests
 from requests.adapters import HTTPAdapter, Retry
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 
 API_URL = 'https://api-web.nhle.com/v1'
