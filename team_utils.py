@@ -34,9 +34,9 @@ def save_team_info_to_file(team_info, file_path):
         json.dump(team_info, f, indent=4)
 
 # Specify the desired file path
-file_path = 'data/team_info.json'
+# file_path = 'data/team_info.json'
 
 # Call the function to save team_info
-save_team_info_to_file(team_info, file_path)
+# save_team_info_to_file(team_info, file_path)
 
-print(f"team_info has been saved to {file_path}")
+# print(f"team_info has been saved to {file_path}")
