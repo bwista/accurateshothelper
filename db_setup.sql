@@ -1,4 +1,5 @@
 -- db_setup.sql
+-- 
 -- SQL script to create the players table in PostgreSQL
 
 CREATE TABLE IF NOT EXISTS players (
@@ -6,7 +7,7 @@ CREATE TABLE IF NOT EXISTS players (
     first_name VARCHAR(100),
     last_name VARCHAR(100),
     full_name VARCHAR(200),
-    primary_position VARCHAR(50),
+    position VARCHAR(50),
     jersey_number INTEGER,
     date_of_birth DATE,
     nationality VARCHAR(100),

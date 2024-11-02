@@ -38,17 +38,17 @@ def insert_player(player_id: int, db_config: dict) -> None:
             'first_name': extract_name(player_json.get('firstName')),
             'last_name': extract_name(player_json.get('lastName')),
             'full_name': extract_full_name(player_json),
-            'primary_position': extract_primary_position(player_json.get('primaryPosition')),
-            'jersey_number': player_json.get('primaryNumber'),
+            'position': extract_position(player_json.get('position')),
+            'jersey_number': player_json.get('sweaterNumber'),
             'date_of_birth': player_json.get('birthDate'),
-            'nationality': player_json.get('nationality'),
-            'height_cm': convert_height_to_cm(player_json.get('height', '')),
-            'weight_kg': player_json.get('weight'),
+            'nationality': player_json.get('birthCountry'),
+            'height': player_json.get('heightInInches'),
+            'weight': player_json.get('weightInPounds'),
             'shoots': player_json.get('shootsCatches'),
-            'current_team_id': extract_current_team_id(player_json.get('currentTeam')),
-            'current_team_name': extract_current_team_name(player_json.get('currentTeam')),
-            'current_team_abbreviation': extract_current_team_abbreviation(player_json.get('currentTeam')),
-            'is_active': player_json.get('active')
+            'current_team_id': player_json.get('currentTeamId'),
+            'current_team_name': extract_name(player_json.get('fullTeamName')),
+            'current_team_abbreviation': player_json.get('currentTeamAbbrev'),
+            'is_active': player_json.get('isActive')
         }
 
         # Debug: Print the types and values of each field in player_data
@@ -72,12 +72,12 @@ def insert_player(player_id: int, db_config: dict) -> None:
             first_name,
             last_name,
             full_name,
-            primary_position,
+            position,
             jersey_number,
             date_of_birth,
             nationality,
-            height_cm,
-            weight_kg,
+            height,
+            weight,
             shoots,
             current_team_id,
             current_team_name,
@@ -88,12 +88,12 @@ def insert_player(player_id: int, db_config: dict) -> None:
             %(first_name)s,
             %(last_name)s,
             %(full_name)s,
-            %(primary_position)s,
+            %(position)s,
             %(jersey_number)s,
             %(date_of_birth)s,
             %(nationality)s,
-            %(height_cm)s,
-            %(weight_kg)s,
+            %(height)s,
+            %(weight)s,
             %(shoots)s,
             %(current_team_id)s,
             %(current_team_name)s,
@@ -104,12 +104,12 @@ def insert_player(player_id: int, db_config: dict) -> None:
             first_name = EXCLUDED.first_name,
             last_name = EXCLUDED.last_name,
             full_name = EXCLUDED.full_name,
-            primary_position = EXCLUDED.primary_position,
+            position = EXCLUDED.position,
             jersey_number = EXCLUDED.jersey_number,
             date_of_birth = EXCLUDED.date_of_birth,
             nationality = EXCLUDED.nationality,
-            height_cm = EXCLUDED.height_cm,
-            weight_kg = EXCLUDED.weight_kg,
+            height = EXCLUDED.height,
+            weight = EXCLUDED.weight,
             shoots = EXCLUDED.shoots,
             current_team_id = EXCLUDED.current_team_id,
             current_team_name = EXCLUDED.current_team_name,
@@ -186,19 +186,19 @@ def extract_full_name(player_json: dict) -> str:
             return f"{first_name} {last_name}"
     return full_name
 
-def extract_primary_position(primary_position: dict) -> str:
+def extract_position(position: dict) -> str:
     """
-    Extracts the primary position name from the primaryPosition dictionary.
+    Extracts the position name from the position dictionary.
 
     Parameters:
-        primary_position (dict): The primaryPosition dictionary from the API response.
+        position (dict): The position dictionary from the API response.
 
     Returns:
-        str: The name of the primary position or None if not available.
+        str: The name of the position or None if not available.
     """
-    if isinstance(primary_position, dict):
-        return primary_position.get('name')
-    return primary_position
+    if isinstance(position, dict):
+        return position.get('name')
+    return position
 
 def extract_current_team_id(current_team: dict) -> int:
     """
@@ -225,7 +225,7 @@ def extract_current_team_name(current_team: dict) -> str:
         str: The name of the current team or None if not available.
     """
     if isinstance(current_team, dict):
-        return current_team.get('name')
+        return current_team.get('default')
     return current_team
 
 def extract_current_team_abbreviation(current_team: dict) -> str:
@@ -242,36 +242,17 @@ def extract_current_team_abbreviation(current_team: dict) -> str:
         return current_team.get('abbreviation')
     return current_team
 
-def convert_height_to_cm(height_str: str) -> float:
-    """
-    Converts height from a string format (e.g., "6' 1\"") to centimeters.
-
-    Parameters:
-        height_str (str): Height string in the format feet'inches".
-
-    Returns:
-        float: Height in centimeters or None if conversion fails.
-    """
-    try:
-        feet, inches = height_str.split("'")
-        inches = inches.replace('"', '').strip()
-        total_inches = int(feet) * 12 + int(inches)
-        cm = round(total_inches * 2.54, 2)
-        return cm
-    except (ValueError, AttributeError):
-        return None  # Return None if height is not available or parsing fails
-
 # Example usage
-if __name__ == "__main__":
-    # Database configuration
-    db_config = {
-        'dbname': 'nhl_players_db',
-        'user': 'postgres',
-        'password': 'willIam21278$',  # Replace with your actual password or use environment variables
-        'host': 'localhost',
-        'port': '5432'
-    }
+# if __name__ == "__main__":
+#     # Database configuration
+#     db_config = {
+#         'dbname': 'nhl_players_db',
+#         'user': 'postgres',
+#         'password': 'willIam21278$',  # Replace with your actual password or use environment variables
+#         'host': 'localhost',
+#         'port': '5432'
+#     }
 
-    player_id = 8475193  # Example player ID
+#     player_id = 8475193  # Example player ID
 
-    insert_player(player_id, db_config)
+#     insert_player(player_id, db_config)
