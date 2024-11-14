@@ -2,7 +2,7 @@ import pandas as pd
 import requests
 from io import StringIO
 
-def nst_player_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit='5v5'):
+def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit='5v5', pos='std'):
     """
     Extracts player on-ice statistics from Natural Stat Trick for specified seasons and filtering conditions.
 
@@ -11,8 +11,9 @@ def nst_player_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=
         thruseason (int): The ending season in the format YYYYYYYY (e.g., 20242025).
         startdate (str): The start date in the format YYYY-MM-DD (e.g., 2024-10-08).
         enddate (str): The end date in the format YYYY-MM-DD (e.g., 2024-10-14).
-        stype (int, optional): Type of statistics to retrieve. Defaults to 2 regular season.
+        stype (int, optional): Type of statistics to retrieve. Defaults to 2 for regular season.
         sit (str, optional): Situation type to filter by (e.g., '5v5'). Defaults to '5v5'.
+        pos (str, optional): Type of player statistics to retrieve. Use 'std' for standard players or 'g' for goalies. Defaults to 'std'.
 
     Returns:
         df: A DataFrame containing the player on-ice statistics.
@@ -21,7 +22,16 @@ def nst_player_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=
         requests.exceptions.HTTPError: If the HTTP request returned an unsuccessful status code.
         Exception: For any other errors that occur during the scraping process.
     """
-    url = f"https://www.naturalstattrick.com/playerteams.php?fromseason={fromseason}&thruseason={thruseason}&stype={stype}&sit={sit}&score=all&stdoi=std&rate=n&team=ALL&pos=S&loc=B&toi=0&gpfilt=gpdate&fd={startdate}&td={enddate}&tgp=410&lines=single&draftteam=ALL"
+    # Validate pos input
+    if pos not in ['std', 'g']:
+        raise ValueError("pos must be either 'std' for standard players or 'g' for goalies.")
+
+    url = (
+        f"https://www.naturalstattrick.com/playerteams.php?"
+        f"fromseason={fromseason}&thruseason={thruseason}&stype={stype}&sit={sit}"
+        f"&score=all&stdoi={pos}&rate=n&team=ALL&pos=S&loc=B&toi=0"
+        f"&gpfilt=gpdate&fd={startdate}&td={enddate}&tgp=410&lines=single&draftteam=ALL"
+    )
 
     try:
         # Send a GET request to the URL
