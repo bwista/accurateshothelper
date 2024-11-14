@@ -1,4 +1,6 @@
 import requests
+import json
+import os
 
 API_URL = 'https://api-web.nhle.com/'
 
@@ -40,3 +42,19 @@ def save_team_info_to_file(team_info, file_path):
 # save_team_info_to_file(team_info, file_path)
 
 # print(f"team_info has been saved to {file_path}")
+
+def get_team_roster(team_code: str, season: int) -> dict:
+    """
+    Retrieves the roster for a specific NHL team and season.
+
+    Parameters:
+        team_code (str): Three-letter team code (e.g., 'TOR').
+        season (int): Season in YYYYYYYY format (e.g., 20222023).
+
+    Returns:
+        dict: JSON response containing the team roster.
+    """
+    roster_url = f"{API_URL}v1/roster/{team_code}/{season}"
+    response = requests.get(roster_url)
+    response.raise_for_status()
+    return response.json()

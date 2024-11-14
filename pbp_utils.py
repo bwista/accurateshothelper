@@ -6,28 +6,24 @@ import pandas as pd
 API_URL = 'https://api-web.nhle.com/v1'
 
 def get_matchup_games(start_date, end_date):
-    r = requests.get(url=API_URL + '/schedule/' + str(start_date))
-    data = r.json()
+    """
+    Retrieves NHL game matchups for a given date range from the NHL API.
 
-    end_date_dt = datetime.strptime(end_date, '%Y-%m-%d')
-    matchup_games = {'next_start_date': '', 'game_ids': {'id': [], 'date': []}}
+    Parameters:
+        start_date (str): The start date in 'YYYY-MM-DD' format.
+        end_date (str): The end date in 'YYYY-MM-DD' format.
 
-    matchup_games['next_start_date'] = data['nextStartDate']
+    Returns:
+        dict: A dictionary containing:
+            - next_start_date (str): The next available date after the requested range
+            - game_ids (dict): Dictionary with two lists:
+                - id: List of game IDs
+                - date: List of corresponding game dates
 
-    for day in data['gameWeek']:
-        for game in day['games']:
-            # game_date_timestamp = game['startTimeUTC']  # Read the game's start time
-            # game_date = datetime.strptime(game_date_timestamp, '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d')
-            game_date = day['date']
-            # Strip the time and retain only the date this causes problems for the sweden games
-
-            if datetime.strptime(game_date, '%Y-%m-%d').date() <= end_date_dt.date():
-                matchup_games['game_ids']['id'].append(game['id'])
-                matchup_games['game_ids']['date'].append(game_date)
-
-    return matchup_games
-
-def get_matchup_games(start_date, end_date):
+    Note:
+        The function fetches one week of games starting from start_date and filters
+        games up to end_date. For multi-week ranges, use retrieve_schedule().
+    """
     r = requests.get(url=API_URL + '/schedule/' + str(start_date))
     data = r.json()
 
