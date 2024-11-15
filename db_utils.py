@@ -256,3 +256,51 @@ def extract_current_team_abbreviation(current_team: dict) -> str:
 #     player_id = 8475193  # Example player ID
 
 #     insert_player(player_id, db_config)
+
+def append_player_ids(player_list, db_config):
+    """
+    Loops through the player_list (input), matches each player's name with the full_name in the database,
+    retrieves the player_id, and appends it to the Player objects.
+
+    Args:
+        player_list (list of Player): The list of Player objects to update with player_id.
+        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+    """
+    # Removed loading environment variables since db_config is provided as an argument
+
+    # Extract unique player names to minimize database queries
+    player_names = list(set(player.name for player in player_list))
+    
+    try:
+        # Establish a connection to the database
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+        
+        # Prepare and execute the SQL query to fetch player_ids
+        query = """
+        SELECT full_name, player_id
+        FROM players
+        WHERE full_name = ANY(%s)
+        """
+        cursor.execute(query, (player_names,))
+        results = cursor.fetchall()
+        
+        # Create a mapping from full_name to player_id
+        name_to_id = {name: pid for name, pid in results}
+        
+        # Iterate through the player_list and assign player_id
+        for player in player_list:
+            if player.name in name_to_id:
+                player.player_id = name_to_id[player.name]
+                print(f"Assigned player_id {player.player_id} to {player.name}.")
+            else:
+                print(f"Warning: No player_id found for {player.name}.")
+                
+    except psycopg2.Error as e:
+        print(f"Database error occurred: {e}")
+    finally:
+        # Close the cursor and connection
+        if 'cursor' in locals() and cursor:
+            cursor.close()
+        if 'conn' in locals() and conn:
+            conn.close()
