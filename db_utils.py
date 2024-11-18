@@ -420,7 +420,7 @@ def extract_unique_player_ids(start_date_str: str, end_date_str: str) -> set:
     print(f"\nTotal unique player IDs extracted: {len(unique_player_ids)}")
     return unique_player_ids
 
-def update_player_db(start_date_str: str, end_date_str: str, db_config: dict) -> None:
+def update_player_db(start_date_str: str, end_date_str: str, db_config: dict, skip_existing: bool = False) -> None:
     """
     Updates the players database by extracting unique player IDs within the specified date range
     and inserting/updating their information.
@@ -429,6 +429,7 @@ def update_player_db(start_date_str: str, end_date_str: str, db_config: dict) ->
         start_date_str (str): The start date in 'YYYY-MM-DD' format.
         end_date_str (str): The end date in 'YYYY-MM-DD' format.
         db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+        skip_existing (bool): If True, skips players that already exist in the database. Defaults to False.
     """
     # Extract unique player IDs within the date range
     unique_player_ids = extract_unique_player_ids(start_date_str, end_date_str)
@@ -437,10 +438,35 @@ def update_player_db(start_date_str: str, end_date_str: str, db_config: dict) ->
         print("No unique player IDs found for the given date range.")
         return
 
-    print(f"Updating database with {len(unique_player_ids)} unique player IDs.")
+    print(f"Found {len(unique_player_ids)} unique player IDs.")
 
-    # Iterate through the unique player IDs and insert/update each player in the database
-    for player_id in unique_player_ids:
+    # If skip_existing is True, get existing player IDs from the database
+    existing_player_ids = set()
+    if skip_existing:
+        try:
+            conn = psycopg2.connect(**db_config)
+            cursor = conn.cursor()
+            cursor.execute("SELECT player_id FROM players")
+            existing_player_ids = {row[0] for row in cursor.fetchall()}
+            print(f"Found {len(existing_player_ids)} existing players in database.")
+        except psycopg2.Error as e:
+            print(f"Database error while fetching existing players: {e}")
+            return
+        finally:
+            if 'cursor' in locals() and cursor:
+                cursor.close()
+            if 'conn' in locals() and conn:
+                conn.close()
+
+        # Filter out existing player IDs
+        player_ids_to_update = unique_player_ids - existing_player_ids
+        print(f"Will process {len(player_ids_to_update)} new players.")
+    else:
+        player_ids_to_update = unique_player_ids
+        print(f"Will process all {len(player_ids_to_update)} players.")
+
+    # Iterate through the filtered player IDs and insert/update each player in the database
+    for player_id in player_ids_to_update:
         insert_player(player_id, db_config)
 
-    print("Player database updated successfully.")
+    print("Player database update completed.")
