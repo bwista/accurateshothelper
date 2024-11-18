@@ -2,6 +2,11 @@
 import psycopg2
 import requests
 
+from requests.adapters import HTTPAdapter, Retry    
+from pbp_utils import retrieve_schedule
+
+API_URL = 'https://api-web.nhle.com/v1'
+
 def insert_player(player_id: int, db_config: dict) -> None:
     """
     Retrieves player information from the NHL API and inserts it into the players table.
@@ -21,7 +26,7 @@ def insert_player(player_id: int, db_config: dict) -> None:
         insert_player(player_id=8478236, db_config=db_config)
     """
     # Define the API endpoint
-    url = f'https://api-web.nhle.com/v1/player/{player_id}/landing'
+    url = f'{API_URL}/player/{player_id}/landing'
 
     try:
         # Fetch player data from the NHL API
@@ -304,3 +309,138 @@ def append_player_ids(player_list, db_config):
             cursor.close()
         if 'conn' in locals() and conn:
             conn.close()
+
+def get_boxscores(start_date_str, end_date_str):
+    """
+    Retrieves boxscore information for all games within a specified date range.
+
+    Parameters:
+        start_date_str (str): The start date in 'YYYY-MM-DD' format.
+        end_date_str (str): The end date in 'YYYY-MM-DD' format.
+
+    Returns:
+        list: A list of boxscore JSON objects for each game.
+    """
+    # Retrieve the schedule to get all game IDs within the date range
+    schedule = retrieve_schedule(start_date_str, end_date_str)
+    game_ids = schedule['game_ids']
+
+    boxscores = []
+
+    # Set up a session with retry strategy
+    session = requests.Session()
+    retry = Retry(
+        total=5,  # Total number of retries
+        backoff_factor=1,  # Exponential backoff factor
+        status_forcelist=[500, 502, 503, 504, 522, 524],  # HTTP status codes to retry
+        allowed_methods=["GET"]  # Methods to retry
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
+    for game_id in game_ids:
+        try:
+            response = session.get(
+                f"{API_URL}/gamecenter/{game_id}/boxscore",
+                headers={"Content-Type": "application/json"},
+                timeout=10  # Timeout after 10 seconds
+            )
+            response.raise_for_status()  # Raise HTTPError for bad responses
+            boxscore_data = response.json()
+            boxscores.append(boxscore_data)
+            print(f"Successfully fetched boxscore for game {game_id}")
+        
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to fetch boxscore for game {game_id}: {e}")
+            # Optionally, log the error or store it for later analysis
+
+    session.close()
+    return boxscores
+
+def extract_unique_player_ids(start_date_str: str, end_date_str: str) -> set:
+    """
+    Extracts all unique player IDs from boxscore data within the specified date range.
+
+    Parameters:
+        start_date_str (str): The start date in 'YYYY-MM-DD' format.
+        end_date_str (str): The end date in 'YYYY-MM-DD' format.
+
+    Returns:
+        set: A set of unique player IDs.
+    """
+    # Retrieve boxscore data for the given date range
+    boxscores = get_boxscores(start_date_str, end_date_str)
+    unique_player_ids = set()
+    
+    print(f"Retrieved {len(boxscores)} boxscores.")
+
+    if not boxscores:
+        print("No boxscores found for the given date range.")
+        return unique_player_ids
+
+    # Iterate through each boxscore
+    for idx, boxscore in enumerate(boxscores):
+        print(f"\nProcessing boxscore {idx + 1}/{len(boxscores)} (Game ID: {boxscore.get('id')})")
+        
+        # Access the playerByGameStats section
+        player_stats = boxscore.get('playerByGameStats', {})
+        if not player_stats:
+            print("  No 'playerByGameStats' found in this boxscore.")
+            continue
+
+        # Iterate through both homeTeam and awayTeam
+        for team_key in ['homeTeam', 'awayTeam']:
+            team_stats = player_stats.get(team_key, {})
+            if not team_stats:
+                print(f"  No '{team_key}' data found.")
+                continue
+
+            print(f"  Processing team: {team_key}")
+
+            # Define the player positions to extract
+            # Updated 'defensemen' to 'defense'
+            position_groups = ['forwards', 'defense', 'goalies']
+            for position_group in position_groups:
+                players = team_stats.get(position_group, [])
+                if not players:
+                    print(f"    No players found in position group '{position_group}'.")
+                    continue
+
+                print(f"    Processing position group: {position_group} ({len(players)} players)")
+                
+                # Extract player IDs from each position group
+                for player in players:
+                    player_id = player.get('playerId')
+                    if player_id:
+                        unique_player_ids.add(player_id)
+                    else:
+                        print("      Player without 'playerId' encountered.")
+
+    print(f"\nTotal unique player IDs extracted: {len(unique_player_ids)}")
+    return unique_player_ids
+
+def update_player_db(start_date_str: str, end_date_str: str, db_config: dict) -> None:
+    """
+    Updates the players database by extracting unique player IDs within the specified date range
+    and inserting/updating their information.
+
+    Parameters:
+        start_date_str (str): The start date in 'YYYY-MM-DD' format.
+        end_date_str (str): The end date in 'YYYY-MM-DD' format.
+        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+    """
+    # Extract unique player IDs within the date range
+    unique_player_ids = extract_unique_player_ids(start_date_str, end_date_str)
+
+    if not unique_player_ids:
+        print("No unique player IDs found for the given date range.")
+        return
+
+    print(f"Updating database with {len(unique_player_ids)} unique player IDs.")
+
+    # Iterate through the unique player IDs and insert/update each player in the database
+    for player_id in unique_player_ids:
+        insert_player(player_id, db_config)
+
+    print("Player database updated successfully.")
