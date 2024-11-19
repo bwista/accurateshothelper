@@ -470,3 +470,66 @@ def update_player_db(start_date_str: str, end_date_str: str, db_config: dict, sk
         insert_player(player_id, db_config)
 
     print("Player database update completed.")
+
+def check_last_update(db_config: dict) -> str:
+    """
+    Checks the last time the players database was updated by retrieving the most recent
+    `last_updated` timestamp from the players table.
+
+    Parameters:
+        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+
+    Returns:
+        str: The most recent `last_updated` timestamp as a string in ISO format.
+             Returns a message if the table is empty or an error occurs.
+    
+    Example:
+        db_config = {
+            'dbname': 'nhl_players_db',
+            'user': 'postgres',
+            'password': 'your_password',
+            'host': 'localhost',
+            'port': '5432'
+        }
+        last_update = check_last_update(db_config)
+        print(f"Last database update was on: {last_update}")
+    """
+    import psycopg2
+
+    query = """
+    SELECT MAX(last_updated) AS last_update
+    FROM players;
+    """
+
+    try:
+        # Establish a connection to the PostgreSQL database
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # Execute the query to get the latest last_updated timestamp
+        cursor.execute(query)
+        result = cursor.fetchone()
+
+        if result and result[0]:
+            last_update_date = result[0].date().isoformat()
+            print(f"Last database update was on: {last_update_date}")
+            return last_update_date
+        else:
+            message = "The players table is empty or 'last_updated' column is missing."
+            print(message)
+            return message
+
+    except psycopg2.Error as db_err:
+        error_message = f"Database error occurred: {db_err}"
+        print(error_message)
+        return error_message
+    except Exception as e:
+        error_message = f"An unexpected error occurred: {e}"
+        print(error_message)
+        return error_message
+    finally:
+        # Close the cursor and connection
+        if 'cursor' in locals() and cursor:
+            cursor.close()
+        if 'conn' in locals() and conn:
+            conn.close()
