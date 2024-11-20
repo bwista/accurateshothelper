@@ -58,3 +58,19 @@ def get_team_roster(team_code: str, season: int) -> dict:
     response = requests.get(roster_url)
     response.raise_for_status()
     return response.json()
+
+def get_week_schedule(team: str, date: str) -> dict:
+    """
+    Retrieves the weekly schedule for a specific NHL team and date.
+
+    Parameters:
+        team (str): Three-letter team code (e.g., 'TOR').
+        date (str): Date in YYYY-MM-DD format.
+
+    Returns:
+        dict: JSON response containing the weekly schedule.
+    """
+    schedule_url = f"{API_URL}v1/club-schedule/{team}/week/{date}"
+    response = requests.get(schedule_url)
+    response.raise_for_status()
+    return response.json()
