@@ -1,6 +1,8 @@
 import requests
 import json
 import os
+from datetime import datetime, timedelta
+from typing import Dict, Optional
 
 API_URL = 'https://api-web.nhle.com/'
 
@@ -74,3 +76,44 @@ def get_week_schedule(team: str, date: str) -> dict:
     response = requests.get(schedule_url)
     response.raise_for_status()
     return response.json()
+
+def get_most_recent_game_id(team: str, date: str) -> Optional[int]:
+    """
+    Finds the most recent past game_id based on the game_date from the weekly schedule.
+
+    Args:
+        team (str): Three-letter team code (e.g., 'TOR').
+        date (str): The date to retrieve the weekly schedule for in 'YYYY-MM-DD' format.
+
+    Returns:
+        Optional[int]: The game_id of the most recent past game. Returns None if no past games are found.
+    """
+    try:
+        # Parse the original date string to a date object
+        ref_date = datetime.strptime(date, '%Y-%m-%d').date()
+    except ValueError:
+        raise ValueError("date must be in 'YYYY-MM-DD' format.")
+
+    # Add a 7-day offset to the original date
+    date_plus_offset = ref_date - timedelta(days=7)
+    date_plus_offset_str = date_plus_offset.strftime('%Y-%m-%d')
+
+    # Call get_week_schedule with the offset date
+    schedule = get_week_schedule(team, date_plus_offset_str)
+
+    # Filter games that have a gameDate before the reference_date
+    past_games = [
+        game for game in schedule.get('games', [])
+        if datetime.strptime(game.get('gameDate'), '%Y-%m-%d').date() < ref_date
+    ]
+
+    if not past_games:
+        return None
+
+    # Find the game with the latest gameDate
+    most_recent_game = max(
+        past_games,
+        key=lambda x: datetime.strptime(x.get('gameDate'), '%Y-%m-%d').date()
+    )
+
+    return most_recent_game.get('id')
