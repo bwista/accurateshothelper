@@ -95,7 +95,7 @@ def get_most_recent_game_id(team: str, date: str) -> Optional[int]:
         raise ValueError("date must be in 'YYYY-MM-DD' format.")
 
     # Add a 7-day offset to the original date
-    date_plus_offset = ref_date - timedelta(days=7)
+    date_plus_offset = ref_date - timedelta(days=5)
     date_plus_offset_str = date_plus_offset.strftime('%Y-%m-%d')
 
     # Call get_week_schedule with the offset date
