@@ -498,3 +498,43 @@ def check_last_update(db_config: dict) -> str:
         error_message = f"An unexpected error occurred: {e}"
         logger.error(error_message)
         return error_message
+    
+def get_player_full_name(player_id: int, db_config: dict) -> str:
+    """
+    Retrieves the full name of a player given their player_id.
+
+    Parameters:
+        player_id (int): The unique identifier for the player.
+        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+
+    Returns:
+        Optional[str]: The full name of the player if found, else None.
+
+    Example:
+        full_name = get_player_full_name(player_id=8478236, db_config=db_config)
+        print(full_name)  # Output: "Player Full Name"
+    """
+    query = """
+    SELECT full_name
+    FROM players
+    WHERE player_id = %s;
+    """
+
+    try:
+        with get_db_connection(db_config) as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, (player_id,))
+            result = cursor.fetchone()
+            if result:
+                full_name = result[0]
+                logger.info(f"Retrieved full name '{full_name}' for player_id {player_id}.")
+                return full_name
+            else:
+                logger.warning(f"No player found with player_id {player_id}.")
+                return None
+    except psycopg2.Error as db_err:
+        logger.error(f"Database error occurred while retrieving full name: {db_err}")
+        return None
+    except Exception as e:
+        logger.error(f"An unexpected error occurred while retrieving full name: {e}")
+        return None
