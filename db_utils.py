@@ -4,7 +4,7 @@ import requests
 from requests.adapters import HTTPAdapter, Retry
 from contextlib import contextmanager
 import logging
-
+from typing import List, Optional
 from pbp_utils import retrieve_schedule
 
 API_URL = 'https://api-web.nhle.com/v1'
@@ -537,4 +537,52 @@ def get_player_full_name(player_id: int, db_config: dict) -> str:
         return None
     except Exception as e:
         logger.error(f"An unexpected error occurred while retrieving full name: {e}")
+        return None
+
+def get_player_id(full_name: str, db_config: dict) -> Optional[List[int]]:
+    """
+    Retrieves the player_id(s) of player(s) given their full name.
+
+    Parameters:
+        full_name (str): The full name of the player(s).
+        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+
+    Returns:
+        Optional[List[int]]: A list of player_ids if found, else None.
+
+    Example:
+        player_ids = get_player_id(full_name="John Doe", db_config=db_config)
+        if player_ids:
+            for pid in player_ids:
+                print(pid)
+        else:
+            print("No players found with the given name.")
+    """
+    query = """
+    SELECT player_id
+    FROM players
+    WHERE full_name = %s;
+    """
+
+    try:
+        with get_db_connection(db_config) as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, (full_name,))
+            results = cursor.fetchall()
+            
+            if results:
+                player_ids = [row[0] for row in results]
+                if len(player_ids) > 1:
+                    logger.warning(f"Multiple player_ids found for full_name '{full_name}': {player_ids}")
+                else:
+                    logger.info(f"Retrieved player_id '{player_ids[0]}' for full_name '{full_name}'.")
+                return player_ids
+            else:
+                logger.warning(f"No players found with full_name '{full_name}'.")
+                return None
+    except psycopg2.Error as db_err:
+        logger.error(f"Database error occurred while retrieving player_id(s): {db_err}")
+        return None
+    except Exception as e:
+        logger.error(f"An unexpected error occurred while retrieving player_id(s): {e}")
         return None
