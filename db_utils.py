@@ -13,58 +13,63 @@ API_URL = 'https://api-web.nhle.com/v1'
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def connect_db(db_config: dict):
+def connect_db(db_config: dict, suppress_log: bool = False):
     """
     Establishes a connection to the PostgreSQL database.
 
     Parameters:
         db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+        suppress_log (bool): If True, suppresses logger.info output. Defaults to False.
 
     Returns:
         connection: A psycopg2 connection object.
     """
     try:
         conn = psycopg2.connect(**db_config)
-        logger.info("Database connection established.")
+        if not suppress_log:
+            logger.info("Database connection established.")
         return conn
     except psycopg2.Error as db_err:
         logger.error(f"Failed to connect to the database: {db_err}")
         raise
 
-def disconnect_db(conn):
+def disconnect_db(conn, suppress_log: bool = False):
     """
     Closes the connection to the PostgreSQL database.
 
     Parameters:
         conn: A psycopg2 connection object.
+        suppress_log (bool): If True, suppresses logger.info output. Defaults to False.
     """
     try:
         if conn:
             conn.close()
-            logger.info("Database connection closed.")
+            if not suppress_log:
+                logger.info("Database connection closed.")
     except psycopg2.Error as db_err:
         logger.error(f"Failed to close the database connection: {db_err}")
 
 @contextmanager
-def get_db_connection(db_config: dict):
+def get_db_connection(db_config: dict, suppress_log: bool = False):
     """
     Context manager for PostgreSQL database connections.
 
     Parameters:
         db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+        suppress_log (bool): If True, suppresses logger.info output. Defaults to False.
 
     Yields:
         connection: A psycopg2 connection object.
     """
     conn = None
     try:
-        conn = connect_db(db_config)
+        conn = connect_db(db_config, suppress_log)
         yield conn
     except psycopg2.Error as db_err:
         logger.error(f"Database error occurred: {db_err}")
         raise
     finally:
-        disconnect_db(conn)
+        disconnect_db(conn, suppress_log)
 
 def insert_player(player_id: int, db_config: dict) -> None:
     """
@@ -500,21 +505,6 @@ def check_last_update(db_config: dict) -> str:
         return error_message
     
 def get_player_full_name(player_id: int, db_config: dict, suppress_log: bool = False) -> Optional[str]:
-    """
-    Retrieves the full name of a player given their player_id.
-
-    Parameters:
-        player_id (int): The unique identifier for the player.
-        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
-        suppress_log (bool): If True, suppresses logger.info output. Defaults to False.
-
-    Returns:
-        Optional[str]: The full name of the player if found, else None.
-
-    Example:
-        full_name = get_player_full_name(player_id=8478236, db_config=db_config)
-        print(full_name)  # Output: "Player Full Name"
-    """
     query = """
     SELECT full_name
     FROM players
@@ -522,7 +512,7 @@ def get_player_full_name(player_id: int, db_config: dict, suppress_log: bool = F
     """
 
     try:
-        with get_db_connection(db_config) as conn:
+        with get_db_connection(db_config, suppress_log=suppress_log) as conn:  # Pass suppress_log here
             cursor = conn.cursor()
             cursor.execute(query, (player_id,))
             result = cursor.fetchone()
@@ -532,13 +522,16 @@ def get_player_full_name(player_id: int, db_config: dict, suppress_log: bool = F
                     logger.info(f"Retrieved full name '{full_name}' for player_id {player_id}.")
                 return full_name
             else:
-                logger.warning(f"No player found with player_id {player_id}.")
+                if not suppress_log:  # Add condition here
+                    logger.warning(f"No player found with player_id {player_id}.")
                 return None
     except psycopg2.Error as db_err:
-        logger.error(f"Database error occurred while retrieving full name: {db_err}")
+        if not suppress_log:  # Add condition here
+            logger.error(f"Database error occurred while retrieving full name: {db_err}")
         return None
     except Exception as e:
-        logger.error(f"An unexpected error occurred while retrieving full name: {e}")
+        if not suppress_log:  # Add condition here
+            logger.error(f"An unexpected error occurred while retrieving full name: {e}")
         return None
 
 def get_player_id(full_name: str, db_config: dict) -> Optional[List[int]]:
