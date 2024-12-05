@@ -5,23 +5,33 @@ import pandas as pd
 
 API_URL = 'https://api-web.nhle.com/v1'
 
-def get_game_boxscore(game_id: int) -> dict:
+def get_game_boxscore(game_id: int, clean: bool = False) -> dict:
     """
     Retrieves boxscore information for a specific NHL game.
 
     Parameters:
         game_id (int): The ID of the game to retrieve boxscore data for.
+        clean (bool): Whether to return a cleaned version of the data with only
+                      gameDate, awayTeam abbrev, and homeTeam abbrev. Defaults to True.
 
     Returns:
-        dict: JSON response containing the game's boxscore information.
-
+        dict: JSON response containing the game's boxscore information or a cleaned version.
+    
     Raises:
         requests.exceptions.RequestException: If the API request fails.
     """
     boxscore_url = f"{API_URL}/gamecenter/{game_id}/boxscore"
     response = requests.get(boxscore_url)
     response.raise_for_status()
-    return response.json()
+    data = response.json()
+    
+    if clean:
+        return {
+            'away_team': data.get('awayTeam', {}).get('abbrev'),
+            'home_team': data.get('homeTeam', {}).get('abbrev')
+        }
+    
+    return data
 
 def display_boxscore(game_data):
     """

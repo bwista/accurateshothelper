@@ -499,13 +499,14 @@ def check_last_update(db_config: dict) -> str:
         logger.error(error_message)
         return error_message
     
-def get_player_full_name(player_id: int, db_config: dict) -> str:
+def get_player_full_name(player_id: int, db_config: dict, suppress_log: bool = False) -> Optional[str]:
     """
     Retrieves the full name of a player given their player_id.
 
     Parameters:
         player_id (int): The unique identifier for the player.
         db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+        suppress_log (bool): If True, suppresses logger.info output. Defaults to False.
 
     Returns:
         Optional[str]: The full name of the player if found, else None.
@@ -527,7 +528,8 @@ def get_player_full_name(player_id: int, db_config: dict) -> str:
             result = cursor.fetchone()
             if result:
                 full_name = result[0]
-                logger.info(f"Retrieved full name '{full_name}' for player_id {player_id}.")
+                if not suppress_log:
+                    logger.info(f"Retrieved full name '{full_name}' for player_id {player_id}.")
                 return full_name
             else:
                 logger.warning(f"No player found with player_id {player_id}.")
