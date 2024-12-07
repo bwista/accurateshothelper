@@ -45,6 +45,53 @@ def save_team_info_to_file(team_info, file_path):
 
 # print(f"team_info has been saved to {file_path}")
 
+# Initialize a cache for team information
+_team_info_cache: Optional[Dict[str, Dict[str, str]]] = None
+
+def _load_team_info() -> Dict[str, Dict[str, str]]:
+    global _team_info_cache
+    if _team_info_cache is None:
+        file_path = 'data/team_info.json'
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"The file {file_path} does not exist.")
+        with open(file_path, 'r') as f:
+            _team_info_cache = json.load(f)
+    return _team_info_cache
+
+def get_tricode_by_fullname(full_name: str) -> Optional[str]:
+    """
+    Retrieves the triCode (abbreviation) for a given NHL team's full name.
+
+    Parameters:
+        full_name (str): The full name of the NHL team.
+
+    Returns:
+        Optional[str]: The triCode of the team if found, otherwise None.
+    """
+    team_info = _load_team_info()
+
+    for info in team_info.values():
+        if info.get('fullName').lower() == full_name.lower():
+            return info.get('triCode')
+    return None
+
+def get_fullname_by_tricode(tri_code: str) -> Optional[str]:
+    """
+    Retrieves the fullName for a given NHL team's triCode (abbreviation).
+
+    Parameters:
+        tri_code (str): The triCode (abbreviation) of the NHL team.
+
+    Returns:
+        Optional[str]: The fullName of the team if found, otherwise None.
+    """
+    team_info = _load_team_info()
+
+    for info in team_info.values():
+        if info.get('triCode').lower() == tri_code.lower():
+            return info.get('fullName')
+    return None
+
 def get_team_roster(team_code: str, season: int) -> dict:
     """
     Retrieves the roster for a specific NHL team and season.
