@@ -61,3 +61,54 @@ def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit=
         print(f"HTTP error occurred: {http_err}")  # HTTP error
     except Exception as err:
         print(f"An error occurred: {err}")  # Other errors
+        
+def nst_team_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit='all'):
+    """
+    Extracts team on-ice statistics from Natural Stat Trick for specified seasons and filtering conditions.
+
+    Parameters:
+        fromseason (int): The starting season in the format YYYYYYYY (e.g., 20242025).
+        thruseason (int): The ending season in the format YYYYYYYY (e.g., 20242025).
+        startdate (str): The start date in the format YYYY-MM-DD (e.g., 2024-10-08).
+        enddate (str): The end date in the format YYYY-MM-DD (e.g., 2024-10-14).
+        stype (int, optional): Type of statistics to retrieve. Defaults to 2 for regular season.
+        sit (str, optional): Situation type to filter by (e.g., 'all'). Defaults to 'all'.
+
+    Returns:
+        DataFrame: A DataFrame containing the team on-ice statistics.
+
+    Raises:
+        requests.exceptions.HTTPError: If the HTTP request returned an unsuccessful status code.
+        Exception: For any other errors that occur during the scraping process.
+    """
+    url = (
+        f"https://www.naturalstattrick.com/teamtable.php?"
+        f"fromseason={fromseason}&thruseason={thruseason}&stype={stype}&sit={sit}"
+        f"&score=all&rate=n&team=all&loc=B&gpf=410&fd={startdate}&td={enddate}"
+    )
+
+    try:
+        # Send a GET request to the URL
+        response = requests.get(url)
+        response.raise_for_status()  # Raises HTTPError for bad responses
+
+        # Wrap the response text in StringIO
+        html_content = StringIO(response.text)
+
+        # Parse all tables from the HTML content using 'lxml' parser
+        tables = pd.read_html(html_content, flavor='lxml')
+
+        if tables:
+            # Assuming the first table is the one you need
+            df = tables[0]
+            if 'Unnamed: 0' in df.columns:
+                df = df.drop(columns=['Unnamed: 0'])
+            df.columns = df.columns.str.lower().str.replace(' ', '_')
+            return df
+        else:
+            print("No tables found on the webpage.")
+
+    except requests.exceptions.HTTPError as http_err:
+        print(f"HTTP error occurred: {http_err}")  # HTTP error
+    except Exception as err:
+        print(f"An error occurred: {err}")  # Other errors
