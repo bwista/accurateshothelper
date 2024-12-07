@@ -2,7 +2,7 @@ import pandas as pd
 import requests
 from io import StringIO
 
-def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit='5v5', pos='std', rate='n'):
+def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit='5v5', stdoi='std', pos='std', rate='n'):
     """
     Extracts player on-ice statistics from Natural Stat Trick for specified seasons and filtering conditions.
 
@@ -23,14 +23,16 @@ def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit=
         requests.exceptions.HTTPError: If the HTTP request returned an unsuccessful status code.
         Exception: For any other errors that occur during the scraping process.
     """
-    # Validate pos input
+    if stdoi not in ['std', 'oi', 'g']:
+        raise ValueError("stdoi must be either 'std' for individual stats, 'oi' for on-ice stats, or 'g' for goalies.")
+    # Validate pos input, std(skaters) or g(goalies)
     if pos not in ['std', 'g']:
         raise ValueError("pos must be either 'std' for standard players or 'g' for goalies.")
 
     url = (
         f"https://www.naturalstattrick.com/playerteams.php?"
         f"fromseason={fromseason}&thruseason={thruseason}&stype={stype}&sit={sit}"
-        f"&score=all&stdoi={pos}&rate={rate}&team=ALL&pos=S&loc=B&toi=0"
+        f"&score=all&stdoi={stdoi}&rate={rate}&team=ALL&pos={pos}&loc=B&toi=0"
         f"&gpfilt=none&fd={startdate}&td={enddate}&tgp=410&lines=single&draftteam=ALL"
     )
 
