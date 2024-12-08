@@ -54,21 +54,27 @@ def display_boxscore(game_data):
     if isinstance(game_data, int):
         game_data = get_game_boxscore(game_data)
 
+    # Retrieve team abbreviations
+    away_team = game_data['awayTeam']['abbrev']
+    home_team = game_data['homeTeam']['abbrev']
+
     # Helper function to process skater data
-    def process_skaters(team_data, team_type):
+    def process_skaters(team_data, team_type, team_abbrev):
         forwards = team_data.get('forwards', [])
         defense = team_data.get('defense', [])
         skaters = forwards + defense
         for skater in skaters:
             skater['team'] = team_type
+            skater['team_abbrev'] = team_abbrev  # Added team_abbrev
             # Extract default name value
             skater['name'] = skater['name']['default']
         return skaters
 
     # Helper function to process goalie data
-    def process_goalies(goalies, team_type):
+    def process_goalies(goalies, team_type, team_abbrev):
         for goalie in goalies:
             goalie['team'] = team_type
+            goalie['team_abbrev'] = team_abbrev  # Added team_abbrev
             # Extract default name value
             goalie['name'] = goalie['name']['default']
         return goalies
@@ -79,12 +85,12 @@ def display_boxscore(game_data):
     home_team_data = player_stats.get('homeTeam', {})
 
     # Process skaters
-    away_skaters = process_skaters(away_team_data, 'Away')
-    home_skaters = process_skaters(home_team_data, 'Home')
+    away_skaters = process_skaters(away_team_data, 'Away', away_team)
+    home_skaters = process_skaters(home_team_data, 'Home', home_team)
 
     # Process goalies
-    away_goalies = process_goalies(away_team_data.get('goalies', []), 'Away')
-    home_goalies = process_goalies(home_team_data.get('goalies', []), 'Home')
+    away_goalies = process_goalies(away_team_data.get('goalies', []), 'Away', away_team)
+    home_goalies = process_goalies(home_team_data.get('goalies', []), 'Home', home_team)
 
     # Create DataFrames
     away_skaters_df = pd.DataFrame(away_skaters)
