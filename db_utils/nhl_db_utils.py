@@ -1,3 +1,11 @@
+# db_utils/nhl_db_utils.py
+from .base_utils import get_db_connection
+
+DB_PREFIX = 'NHL_DB_'
+
+def get_nhl_db_connection():
+    return get_db_connection(DB_PREFIX)
+
 import psycopg2
 from psycopg2 import extras
 import requests
