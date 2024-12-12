@@ -8,8 +8,6 @@ CREATE TABLE IF NOT EXISTS game_info (
     away_team VARCHAR(100) NOT NULL,
     home_team VARCHAR(100) NOT NULL,
     start_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-    participants JSONB DEFAULT '[]'::jsonb,
-    is_started BOOLEAN,
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
