@@ -1,5 +1,5 @@
 # db_utils/nhl_db_utils.py
-from .base_utils import get_db_connection
+from .base_utils import get_db_connection, connect_db, disconnect_db
 
 DB_PREFIX = 'NHL_DB_'
 
@@ -21,49 +21,13 @@ API_URL = 'https://api-web.nhle.com/v1'
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def connect_db(db_config: dict, suppress_log: bool = False):
-    """
-    Establishes a connection to the PostgreSQL database.
-
-    Parameters:
-        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
-        suppress_log (bool): If True, suppresses logger.info output. Defaults to False.
-
-    Returns:
-        connection: A psycopg2 connection object.
-    """
-    try:
-        conn = psycopg2.connect(**db_config)
-        if not suppress_log:
-            logger.info("Database connection established.")
-        return conn
-    except psycopg2.Error as db_err:
-        logger.error(f"Failed to connect to the database: {db_err}")
-        raise
-
-def disconnect_db(conn, suppress_log: bool = False):
-    """
-    Closes the connection to the PostgreSQL database.
-
-    Parameters:
-        conn: A psycopg2 connection object.
-        suppress_log (bool): If True, suppresses logger.info output. Defaults to False.
-    """
-    try:
-        if conn:
-            conn.close()
-            if not suppress_log:
-                logger.info("Database connection closed.")
-    except psycopg2.Error as db_err:
-        logger.error(f"Failed to close the database connection: {db_err}")
-
 @contextmanager
-def get_db_connection(db_config: dict, suppress_log: bool = False):
+def get_db_connection(db_prefix: dict, suppress_log: bool = False):
     """
     Context manager for PostgreSQL database connections.
 
     Parameters:
-        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+        db_prefix (dict): Database configuration with keys: dbname, user, password, host, port.
         suppress_log (bool): If True, suppresses logger.info output. Defaults to False.
 
     Yields:
@@ -71,7 +35,7 @@ def get_db_connection(db_config: dict, suppress_log: bool = False):
     """
     conn = None
     try:
-        conn = connect_db(db_config, suppress_log)
+        conn = connect_db(db_prefix, suppress_log)
         yield conn
     except psycopg2.Error as db_err:
         logger.error(f"Database error occurred: {db_err}")
@@ -79,16 +43,16 @@ def get_db_connection(db_config: dict, suppress_log: bool = False):
     finally:
         disconnect_db(conn, suppress_log)
 
-def insert_player(player_id: int, db_config: dict) -> None:
+def insert_player(player_id: int, db_prefix: dict) -> None:
     """
     Retrieves player information from the NHL API and inserts it into the players table.
 
     Parameters:
         player_id (int): The unique identifier for the player.
-        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+        db_prefix (dict): Database configuration with keys: dbname, user, password, host, port.
 
     Example:
-        insert_player(player_id=8478236, db_config=db_config)
+        insert_player(player_id=8478236, db_prefix=db_prefix)
     """
     url = f'{API_URL}/player/{player_id}/landing'
 
@@ -127,7 +91,7 @@ def insert_player(player_id: int, db_config: dict) -> None:
             logger.error("Error: 'player_id' is None. Cannot proceed with database insertion.")
             return
 
-        with get_db_connection(db_config) as conn:
+        with get_db_connection(db_prefix) as conn:
             cursor = conn.cursor()
 
             # Define the SQL INSERT statement with upsert capability
@@ -260,20 +224,20 @@ def extract_position(position: dict) -> str:
         return position.get('name')
     return position
 
-def append_player_ids(player_list, db_config):
+def append_player_ids(player_list, db_prefix):
     """
     Loops through the player_list (input), matches each player's name with the full_name in the database,
     retrieves the player_id, and appends it to the Player objects.
 
     Args:
         player_list (list of Player): The list of Player objects to update with player_id.
-        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+        db_prefix (dict): Database configuration with keys: dbname, user, password, host, port.
     """
     # Extract unique player names to minimize database queries
     player_names = list(set(player.name for player in player_list))
 
     try:
-        with get_db_connection(db_config) as conn:
+        with get_db_connection(db_prefix) as conn:
             cursor = conn.cursor()
 
             # Prepare and execute the SQL query to fetch player_ids
@@ -411,7 +375,7 @@ def extract_unique_player_ids(start_date_str: str, end_date_str: str) -> set:
     logger.info(f"Total unique player IDs extracted: {len(unique_player_ids)}")
     return unique_player_ids
 
-def update_player_db(start_date_str: str, end_date_str: str, db_config: dict, skip_existing: bool = False) -> None:
+def update_player_db(start_date_str: str, end_date_str: str, db_prefix: dict, skip_existing: bool = False) -> None:
     """
     Updates the players database by extracting unique player IDs within the specified date range
     and inserting/updating their information.
@@ -419,7 +383,7 @@ def update_player_db(start_date_str: str, end_date_str: str, db_config: dict, sk
     Parameters:
         start_date_str (str): The start date in 'YYYY-MM-DD' format.
         end_date_str (str): The end date in 'YYYY-MM-DD' format.
-        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+        db_prefix (dict): Database configuration with keys: dbname, user, password, host, port.
         skip_existing (bool): If True, skips players that already exist in the database. Defaults to False.
     """
     # Extract unique player IDs within the date range
@@ -435,7 +399,7 @@ def update_player_db(start_date_str: str, end_date_str: str, db_config: dict, sk
     existing_player_ids = set()
     if skip_existing:
         try:
-            with get_db_connection(db_config) as conn:
+            with get_db_connection(db_prefix) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT player_id FROM players")
                 existing_player_ids = {row[0] for row in cursor.fetchall()}
@@ -456,31 +420,31 @@ def update_player_db(start_date_str: str, end_date_str: str, db_config: dict, sk
 
     # Iterate through the filtered player IDs and insert/update each player in the database
     for player_id in player_ids_to_update:
-        insert_player(player_id, db_config)
+        insert_player(player_id, db_prefix)
 
     logger.info("Player database update completed.")
 
-def check_last_update(db_config: dict) -> str:
+def check_last_update(db_prefix: dict) -> str:
     """
     Checks the last time the players database was updated by retrieving the most recent
     `last_updated` timestamp from the players table.
 
     Parameters:
-        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+        db_prefix (dict): Database configuration with keys: dbname, user, password, host, port.
 
     Returns:
         str: The most recent `last_updated` timestamp as a string in ISO format.
              Returns a message if the table is empty or an error occurs.
 
     Example:
-        db_config = {
+        db_prefix = {
             'dbname': 'nhl_players_db',
             'user': 'postgres',
             'password': 'your_password',
             'host': 'localhost',
             'port': '5432'
         }
-        last_update = check_last_update(db_config)
+        last_update = check_last_update(db_prefix)
         print(f"Last database update was on: {last_update}")
     """
     query = """
@@ -489,7 +453,7 @@ def check_last_update(db_config: dict) -> str:
     """
 
     try:
-        with get_db_connection(db_config) as conn:
+        with get_db_connection(db_prefix) as conn:
             cursor = conn.cursor()
             cursor.execute(query)
             result = cursor.fetchone()
@@ -512,7 +476,7 @@ def check_last_update(db_config: dict) -> str:
         logger.error(error_message)
         return error_message
     
-def get_player_full_name(player_id: int, db_config: dict, suppress_log: bool = False) -> Optional[str]:
+def get_player_full_name(player_id: int, db_prefix: dict, suppress_log: bool = False) -> Optional[str]:
     query = """
     SELECT full_name
     FROM players
@@ -520,7 +484,7 @@ def get_player_full_name(player_id: int, db_config: dict, suppress_log: bool = F
     """
 
     try:
-        with get_db_connection(db_config, suppress_log=suppress_log) as conn:  # Pass suppress_log here
+        with get_db_connection(db_prefix, suppress_log=suppress_log) as conn:  # Pass suppress_log here
             cursor = conn.cursor()
             cursor.execute(query, (player_id,))
             result = cursor.fetchone()
@@ -542,19 +506,19 @@ def get_player_full_name(player_id: int, db_config: dict, suppress_log: bool = F
             logger.error(f"An unexpected error occurred while retrieving full name: {e}")
         return None
 
-def get_player_id(full_name: str, db_config: dict) -> Optional[List[int]]:
+def get_player_id(full_name: str, db_prefix: dict) -> Optional[List[int]]:
     """
     Retrieves the player_id(s) of player(s) given their full name.
 
     Parameters:
         full_name (str): The full name of the player(s).
-        db_config (dict): Database configuration with keys: dbname, user, password, host, port.
+        db_prefix (dict): Database configuration with keys: dbname, user, password, host, port.
 
     Returns:
         Optional[List[int]]: A list of player_ids if found, else None.
 
     Example:
-        player_ids = get_player_id(full_name="John Doe", db_config=db_config)
+        player_ids = get_player_id(full_name="John Doe", db_prefix=db_prefix)
         if player_ids:
             for pid in player_ids:
                 print(pid)
@@ -568,7 +532,7 @@ def get_player_id(full_name: str, db_config: dict) -> Optional[List[int]]:
     """
 
     try:
-        with get_db_connection(db_config) as conn:
+        with get_db_connection(db_prefix) as conn:
             cursor = conn.cursor()
             cursor.execute(query, (full_name,))
             results = cursor.fetchall()
