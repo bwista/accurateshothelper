@@ -361,6 +361,142 @@ def process_game_markets(query_date, team_abbr, market_name='player_shots_over_u
             
             # Pass the dictionary to the insert function
             insert_outcome_into_db(outcome_data, enable_logging=enable_logging)
-# game_id = "c1fa7d3f30fdb408b78917509d1633c3"
-# data = fetch_game_markets(game_id, 'player_shots_over_under' )
-# process_game_markets(game_id, data)
+            
+def process_nhl_games_for_date(date, market='player_shots_over_under', enable_logging=False):
+    """
+    Processes NHL games for a specific date and market, inserting outcomes into the database.
+
+    Parameters:
+        date (str): The date to query in 'YYYY-MM-DD' format.
+        market (str): The market name to fetch. Defaults to 'player_shots_over_under'.
+        enable_logging (bool): If True, enables logging. Defaults to False.
+    """
+    # Retrieve games from the database for the given date
+    games = get_nhl_games_from_db(date, enable_logging=enable_logging)
+    
+    # If no games are found, fetch and store games for the date
+    if not games:
+        if enable_logging:
+            logging.info(f"No games found in the database for date {date}. Fetching from API.")
+        fetch_and_store_nhl_games(date, enable_logging=enable_logging)
+        games = get_nhl_games_from_db(date, enable_logging=enable_logging)
+    
+    # Process each game
+    for game in games:
+        game_id = game['game_id']
+        away_team_abbr = get_tricode_by_fullname(game['away_team'])
+        home_team_abbr = get_tricode_by_fullname(game['home_team'])
+        
+        # Process markets for both teams
+        for team_abbr in (away_team_abbr, home_team_abbr):
+            process_game_markets(date, team_abbr, market_name=market, enable_logging=enable_logging)
+
+def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None, line=False):
+    """
+    Retrieve player shot over/under odds from the PostgreSQL prop_odds database
+    based on a specific player name and/or sportsbook for a given date.
+    
+    Args:
+        player_name (str, optional): The full name of the player to filter odds by.
+        query_date (str, optional): The date to query in 'YYYY-MM-DD' format. Defaults to today.
+        sportsbook (str, optional): The name of the sportsbook to filter odds by.
+        line (bool, optional): If True, filters odds to find those closest to +100. Defaults to False.
+        
+    Returns:
+        list: A list of dictionaries containing player shot OU odds.
+    """
+
+    # Validate that at least one filter is provided
+    if not player_name and not sportsbook:
+        print("At least one of player_name or sportsbook must be provided.")
+        return []
+
+    # Determine the query date
+    if query_date is None:
+        query_date = datetime.now()
+    else:
+        try:
+            query_date = datetime.strptime(query_date, '%Y-%m-%d')
+        except ValueError:
+            print("Invalid date format. Please use 'YYYY-MM-DD'.")
+            return []
+
+    try:
+        # Establish a database connection
+        conn, cursor = get_db_connection('PROP_ODDS_DB_')
+        if not conn or not cursor:
+            print("Database connection failed.")
+            return []
+
+        # Initialize the base query
+        base_query = """
+            SELECT 
+                pso.game_id,
+                pso.sportsbook,
+                pso.player,
+                pso.ou,
+                pso.handicap,
+                pso.odds,
+                pso.timestamp
+            FROM player_shots_ou pso
+            JOIN game_info gi ON pso.game_id = gi.game_id
+            WHERE gi.start_timestamp::date = %s
+        """
+
+        # Initialize parameters list with the query date
+        params = [query_date.strftime('%Y-%m-%d')]
+
+        # Add filters based on provided arguments
+        if player_name:
+            base_query += " AND pso.player ILIKE %s"
+            params.append(player_name)
+        
+        if sportsbook:
+            base_query += " AND pso.sportsbook ILIKE %s"
+            params.append(sportsbook)
+
+        # Execute the query with parameters
+        cursor.execute(base_query, tuple(params))
+        rows = cursor.fetchall()
+
+        # Process the retrieved rows
+        odds_dict = {}
+        for row in rows:
+            odds = {
+                'game_id': row[0],
+                'sportsbook': row[1],
+                'player': row[2],
+                'ou': row[3],
+                'handicap': row[4],
+                'odds': row[5],
+                'timestamp': row[6]
+            }
+            key = (odds['sportsbook'], odds['ou'])
+            if key not in odds_dict:
+                odds_dict[key] = []
+            odds_dict[key].append(odds)
+
+        # Filter for odds closest to +100 if the line flag is set
+        if line:
+            filtered_odds = []
+            for key, odds_list in odds_dict.items():
+                closest_over = min((o for o in odds_list if o['ou'] == 'Over'), key=lambda x: abs(x['odds'] - 100), default=None)
+                closest_under = min((o for o in odds_list if o['ou'] == 'Under'), key=lambda x: abs(x['odds'] - 100), default=None)
+                if closest_over:
+                    filtered_odds.append(closest_over)
+                if closest_under:
+                    filtered_odds.append(closest_under)
+            return filtered_odds
+        else:
+            # Return all odds if filtering is not required
+            return [odds for odds_list in odds_dict.values() for odds in odds_list]
+
+    except Exception as e:
+        print("An error occurred:", e)
+        return []
+    finally:
+        # Ensure the cursor and connection are closed
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
