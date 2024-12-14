@@ -47,7 +47,7 @@ def fetch_and_store_nhl_games(query_date=None, enable_logging=False):
     }
     params = urllib.parse.urlencode(query_params)
     url = f"{BASE_URL}/beta/games/nhl?{params}"  # Adjust the endpoint as needed
-    games_data = get_request(url)
+    games_data = get_request(url, enable_logging=enable_logging)
 
     if not games_data:
         if enable_logging:
@@ -178,28 +178,31 @@ def get_nhl_games_from_db(query_date=None, enable_logging=False):
 
 # get_nhl_games_from_db('2024-12-11')
 
-def fetch_game_markets(game_id, market_name=None):
+def fetch_game_markets(game_id, market_name=None, enable_logging=False):
     """
     Fetch game markets for a given game ID and optionally a specific market name, then store them in the database.
 
     Args:
         game_id (str): The unique identifier for the game.
         market_name (str, optional): The specific market to fetch. Defaults to None, which fetches all markets.
+        enable_logging (bool, optional): If True, enables logging. Defaults to False.
 
     Returns:
         dict: The market data retrieved from the API.
     """
-    logging.info(f"Fetching game markets for game_id: {game_id}, market_name: {market_name}")
+    if enable_logging:
+        logging.info(f"Fetching game markets for game_id: {game_id}, market_name: {market_name}")
     if market_name is not None:
         url = f"{BASE_URL}/beta/odds/{game_id}/{market_name}?api_key={API_KEY}"
     else:
         url = f"{BASE_URL}/beta/markets/{game_id}?api_key={API_KEY}"
 
     # Use the get_request function from utils.py
-    market_data = get_request(url)
+    market_data = get_request(url, enable_logging=enable_logging)
 
     if market_data is not None:
-        logging.info("Completed fetching game markets.")
+        if enable_logging:
+            logging.info("Completed fetching game markets.")
         return market_data
     else:
         print("Failed to retrieve market data.")
