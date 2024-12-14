@@ -500,3 +500,73 @@ def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None,
             cursor.close()
         if conn:
             conn.close()
+
+def get_mismatched_game_ids_with_details(enable_logging=False):
+    """
+    Compare distinct game_ids in game_info and player_shots_ou tables
+    and return game_ids that are not present in both tables, along with
+    additional details for missing games in game_info.
+
+    Args:
+        enable_logging (bool): If True, enables logging. Defaults to False.
+
+    Returns:
+        dict: A dictionary with keys 'only_in_game_info' and 'only_in_player_shots_ou'
+              containing lists of game_ids not present in both tables. 'only_in_game_info'
+              includes additional details like away_team, home_team, and start_timestamp.
+    """
+    try:
+        # Establish a database connection
+        conn, cursor = get_db_connection('PROP_ODDS_DB_')
+        if not conn or not cursor:
+            if enable_logging:
+                logging.error("Failed to establish a database connection.")
+            return {'only_in_game_info': [], 'only_in_player_shots_ou': []}
+
+        # Query distinct game_ids from both tables
+        cursor.execute("SELECT DISTINCT game_id FROM game_info")
+        game_info_ids = {row[0] for row in cursor.fetchall()}
+
+        cursor.execute("SELECT DISTINCT game_id FROM player_shots_ou")
+        player_shots_ou_ids = {row[0] for row in cursor.fetchall()}
+
+        # Find game_ids not present in both tables
+        only_in_game_info_ids = game_info_ids - player_shots_ou_ids
+        only_in_player_shots_ou = player_shots_ou_ids - game_info_ids
+
+        # Fetch additional details for game_ids only in game_info
+        only_in_game_info = []
+        if only_in_game_info_ids:
+            cursor.execute("""
+                SELECT game_id, away_team, home_team, start_timestamp
+                FROM game_info
+                WHERE game_id = ANY(%s)
+            """, (list(only_in_game_info_ids),))
+            only_in_game_info = cursor.fetchall()
+
+        if enable_logging:
+            logging.info(f"Game IDs only in game_info: {only_in_game_info}")
+            logging.info(f"Game IDs only in player_shots_ou: {only_in_player_shots_ou}")
+
+        return {
+            'only_in_game_info': [
+                {
+                    'game_id': row[0],
+                    'away_team': row[1],
+                    'home_team': row[2],
+                    'start_timestamp': row[3].strftime('%Y-%m-%d')
+                }
+                for row in only_in_game_info
+            ],
+            'only_in_player_shots_ou': list(only_in_player_shots_ou)
+        }
+
+    except Exception as e:
+        if enable_logging:
+            logging.error("An error occurred while comparing game_ids: %s", e)
+        return {'only_in_game_info': [], 'only_in_player_shots_ou': []}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
