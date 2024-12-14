@@ -18,6 +18,7 @@ API_KEY = '5DQv4UzUztm6itoSLRaFdXDi5Dt4zGNFT1DvEFh0D0M'
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_prop_odds_db_connection():
+    logging.info("Establishing Prop Odds DB connection.")
     return get_db_connection(DB_PREFIX)
 
 # Add Prop Odds specific functions...
@@ -32,6 +33,8 @@ def fetch_and_store_nhl_games(query_date=None, enable_logging=False):
     Returns:
         list: A list of game dictionaries retrieved from the API.
     """
+    if enable_logging:
+        logging.info(f"Fetching and storing NHL games for date: {query_date}")
     if query_date is None:
         query_date = datetime.now()
     else:
@@ -110,6 +113,8 @@ def fetch_and_store_nhl_games(query_date=None, enable_logging=False):
         if conn:
             conn.close()
 
+    if enable_logging:
+        logging.info("Completed fetching and storing NHL games.")
     return games
 
 def get_nhl_games_from_db(query_date=None, enable_logging=False):
@@ -123,6 +128,8 @@ def get_nhl_games_from_db(query_date=None, enable_logging=False):
     Returns:
         list: A list of game dictionaries retrieved from the database.
     """
+    if enable_logging:
+        logging.info(f"Retrieving NHL games from DB for date: {query_date}")
     if query_date is None:
         query_date = datetime.now()
     else:
@@ -182,6 +189,7 @@ def fetch_game_markets(game_id, market_name=None):
     Returns:
         dict: The market data retrieved from the API.
     """
+    logging.info(f"Fetching game markets for game_id: {game_id}, market_name: {market_name}")
     if market_name is not None:
         url = f"{BASE_URL}/beta/odds/{game_id}/{market_name}?api_key={API_KEY}"
     else:
@@ -191,6 +199,7 @@ def fetch_game_markets(game_id, market_name=None):
     market_data = get_request(url)
 
     if market_data is not None:
+        logging.info("Completed fetching game markets.")
         return market_data
     else:
         print("Failed to retrieve market data.")
@@ -207,6 +216,7 @@ def format_player_name(name):
     Returns:
         tuple: A tuple containing the player's name and the bet type ('Over' or 'Under').
     """
+    logging.info(f"Formatting player name from: {name}")
     parts = name.split()
 
     # Ensure the name has at least three parts: Player Name, Bet Type, Handicap
@@ -220,6 +230,7 @@ def format_player_name(name):
 
     # Extract player name by joining all parts except the last two
     player_name = ' '.join(parts[:-2])
+    logging.info(f"Extracted player name: {player_name}, bet type: {bet_type}")
     return player_name, bet_type
 
 def insert_outcome_into_db(outcome, enable_logging=False):
@@ -231,6 +242,8 @@ def insert_outcome_into_db(outcome, enable_logging=False):
         outcome (dict): The outcome data to insert.
         enable_logging (bool): If True, enables logging. Defaults to False.
     """
+    if enable_logging:
+        logging.info(f"Inserting outcome into DB: {outcome}")
     try:
         if enable_logging:
             logging.info("Attempting to insert outcome into the database: %s", outcome)
@@ -291,6 +304,8 @@ def process_game_markets(query_date, team_abbr, market_name='player_shots_over_u
         market_name (str): The market name to fetch. Defaults to 'player_shots_over_under'.
         enable_logging (bool): If True, enables logging. Defaults to False.
     """
+    if enable_logging:
+        logging.info(f"Processing game markets for date: {query_date}, team: {team_abbr}, market: {market_name}")
     # Retrieve games from the database for the given date
     games = get_nhl_games_from_db(query_date, enable_logging=enable_logging)
     
@@ -362,6 +377,9 @@ def process_game_markets(query_date, team_abbr, market_name='player_shots_over_u
             # Pass the dictionary to the insert function
             insert_outcome_into_db(outcome_data, enable_logging=enable_logging)
             
+    if enable_logging:
+        logging.info("Completed processing game markets.")
+
 def process_nhl_games_for_date(date, market='player_shots_over_under', enable_logging=False):
     """
     Processes NHL games for a specific date and market, inserting outcomes into the database.
@@ -371,6 +389,8 @@ def process_nhl_games_for_date(date, market='player_shots_over_under', enable_lo
         market (str): The market name to fetch. Defaults to 'player_shots_over_under'.
         enable_logging (bool): If True, enables logging. Defaults to False.
     """
+    if enable_logging:
+        logging.info(f"Processing NHL games for date: {date}, market: {market}")
     # Retrieve games from the database for the given date
     games = get_nhl_games_from_db(date, enable_logging=enable_logging)
     
@@ -390,36 +410,86 @@ def process_nhl_games_for_date(date, market='player_shots_over_under', enable_lo
         # Process markets for both teams
         for team_abbr in (away_team_abbr, home_team_abbr):
             process_game_markets(date, team_abbr, market_name=market, enable_logging=enable_logging)
+    if enable_logging:
+        logging.info("Completed processing NHL games for date.")
 
-def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None, line=False):
+def american_to_decimal(odds):
     """
-    Retrieve player shot over/under odds from the PostgreSQL prop_odds database
-    based on a specific player name and/or sportsbook for a given date.
+    Convert American odds to decimal odds.
     
     Args:
-        player_name (str, optional): The full name of the player to filter odds by.
-        query_date (str, optional): The date to query in 'YYYY-MM-DD' format. Defaults to today.
-        sportsbook (str, optional): The name of the sportsbook to filter odds by.
-        line (bool, optional): If True, filters odds to find those closest to +100. Defaults to False.
+        odds (int): The American odds to convert.
         
+    Returns:
+        float: The decimal odds.
+    """
+    if odds > 0:
+        return 1 + (odds / 100)
+    else:
+        return 1 - (100 / odds)
+
+def filter_odds_closest_to_100(odds_dict):
+    """
+    Filters odds to find those closest to +100 in decimal format.
+
+    Args:
+        odds_dict (dict): A dictionary of odds categorized by sportsbook and over/under.
+
+    Returns:
+        list: A list of dictionaries containing the filtered odds closest to +100.
+    """
+    filtered_odds = []
+    for key, odds_list in odds_dict.items():
+        closest_over = min(
+            (o for o in odds_list if o['ou'] == 'Over'),
+            key=lambda x: abs(american_to_decimal(x['odds']) - 2.0),
+            default=None
+        )
+        closest_under = min(
+            (o for o in odds_list if o['ou'] == 'Under'),
+            key=lambda x: abs(american_to_decimal(x['odds']) - 2.0),
+            default=None
+        )
+        if closest_over:
+            filtered_odds.append(closest_over)
+        if closest_under:
+            filtered_odds.append(closest_under)
+    return filtered_odds
+
+def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None, team_name=None, line=False):
+    """
+    Retrieve player shot over/under odds from the PostgreSQL prop_odds database
+    based on a specific player name, sportsbook, and/or team name.
+
+    Args:
+        player_name (str, optional): The full name of the player to filter odds by.
+        query_date (str, optional): The date to query in 'YYYY-MM-DD' format. Used to retrieve games. Defaults to today.
+        sportsbook (str, optional): The name of the sportsbook to filter odds by.
+        team_name (str, optional): The full name of the team to filter games by.
+        line (bool, optional): If True, filters odds to find those closest to +100. Defaults to False.
+
     Returns:
         list: A list of dictionaries containing player shot OU odds.
     """
+    logging.info(f"Retrieving player shots OU odds for player: {player_name}, date: {query_date}, sportsbook: {sportsbook}, team: {team_name}, line: {line}")
 
     # Validate that at least one filter is provided
-    if not player_name and not sportsbook:
-        print("At least one of player_name or sportsbook must be provided.")
+    if not player_name and not sportsbook and not team_name:
+        print("At least one of player_name, sportsbook, or team_name must be provided.")
         return []
 
-    # Determine the query date
-    if query_date is None:
-        query_date = datetime.now()
-    else:
-        try:
-            query_date = datetime.strptime(query_date, '%Y-%m-%d')
-        except ValueError:
-            print("Invalid date format. Please use 'YYYY-MM-DD'.")
-            return []
+    # Retrieve games from the database for the given date
+    games = get_nhl_games_from_db(query_date, enable_logging=True)
+
+    # Filter games to find the game_id involving the specified team
+    game_ids = []
+    for game in games:
+        if team_name in (game['away_team'], game['home_team']):
+            game_ids.append(game['game_id'])
+
+    if not game_ids:
+        print(f"No games found for team {team_name} on {query_date}.")
+        return []
 
     try:
         # Establish a database connection
@@ -439,12 +509,11 @@ def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None,
                 pso.odds,
                 pso.timestamp
             FROM player_shots_ou pso
-            JOIN game_info gi ON pso.game_id = gi.game_id
-            WHERE gi.start_timestamp::date = %s
+            WHERE pso.game_id = ANY(%s)
         """
 
-        # Initialize parameters list with the query date
-        params = [query_date.strftime('%Y-%m-%d')]
+        # Initialize parameters list with the game_ids
+        params = [game_ids]
 
         # Add filters based on provided arguments
         if player_name:
@@ -478,15 +547,7 @@ def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None,
 
         # Filter for odds closest to +100 if the line flag is set
         if line:
-            filtered_odds = []
-            for key, odds_list in odds_dict.items():
-                closest_over = min((o for o in odds_list if o['ou'] == 'Over'), key=lambda x: abs(x['odds'] - 100), default=None)
-                closest_under = min((o for o in odds_list if o['ou'] == 'Under'), key=lambda x: abs(x['odds'] - 100), default=None)
-                if closest_over:
-                    filtered_odds.append(closest_over)
-                if closest_under:
-                    filtered_odds.append(closest_under)
-            return filtered_odds
+            return filter_odds_closest_to_100(odds_dict)
         else:
             # Return all odds if filtering is not required
             return [odds for odds_list in odds_dict.values() for odds in odds_list]
@@ -500,6 +561,8 @@ def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None,
             cursor.close()
         if conn:
             conn.close()
+    logging.info("Completed retrieving player shots OU odds.")
+    return odds
 
 def get_mismatched_game_ids_with_details(enable_logging=False):
     """
@@ -515,6 +578,8 @@ def get_mismatched_game_ids_with_details(enable_logging=False):
               containing lists of game_ids not present in both tables. 'only_in_game_info'
               includes additional details like away_team, home_team, and start_timestamp.
     """
+    if enable_logging:
+        logging.info("Comparing distinct game_ids in game_info and player_shots_ou tables.")
     try:
         # Establish a database connection
         conn, cursor = get_db_connection('PROP_ODDS_DB_')
@@ -570,3 +635,17 @@ def get_mismatched_game_ids_with_details(enable_logging=False):
             cursor.close()
         if conn:
             conn.close()
+    if enable_logging:
+        logging.info("Completed comparison of game_ids.")
+    return {
+        'only_in_game_info': [
+            {
+                'game_id': row[0],
+                'away_team': row[1],
+                'home_team': row[2],
+                'start_timestamp': row[3].strftime('%Y-%m-%d')
+            }
+            for row in only_in_game_info
+        ],
+        'only_in_player_shots_ou': list(only_in_player_shots_ou)
+    }
