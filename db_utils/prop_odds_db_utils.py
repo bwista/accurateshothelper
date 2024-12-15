@@ -434,29 +434,78 @@ def american_to_decimal(odds):
 def filter_odds_closest_to_100(odds_dict):
     """
     Filters odds to find those closest to +100 in decimal format.
+    For each sportsbook, finds the most recent handicap when Over/Under don't match,
+    and returns both Over and Under for that handicap.
 
     Args:
         odds_dict (dict): A dictionary of odds categorized by sportsbook and over/under.
 
     Returns:
-        list: A list of dictionaries containing the filtered odds closest to +100.
+        list: A list of dictionaries containing the filtered odds.
     """
-    filtered_odds = []
+    # First, get the most recent lines for each unique combination
+    most_recent_odds = {}
     for key, odds_list in odds_dict.items():
-        closest_over = min(
-            (o for o in odds_list if o['ou'] == 'Over'),
-            key=lambda x: abs(american_to_decimal(x['odds']) - 2.0),
-            default=None
-        )
-        closest_under = min(
-            (o for o in odds_list if o['ou'] == 'Under'),
-            key=lambda x: abs(american_to_decimal(x['odds']) - 2.0),
-            default=None
-        )
-        if closest_over:
-            filtered_odds.append(closest_over)
-        if closest_under:
-            filtered_odds.append(closest_under)
+        for odd in odds_list:
+            # Create a unique key for each combination
+            unique_key = (odd['game_id'], odd['sportsbook'], odd['player'], odd['ou'], odd['handicap'])
+            
+            # Convert timestamp string to datetime for comparison
+            timestamp = datetime.strptime(str(odd['timestamp']), '%Y-%m-%d %H:%M:%S%z')
+            
+            # Update if this is the first occurrence or if it's more recent
+            if unique_key not in most_recent_odds or timestamp > datetime.strptime(str(most_recent_odds[unique_key]['timestamp']), '%Y-%m-%d %H:%M:%S%z'):
+                most_recent_odds[unique_key] = odd
+
+    # Organize by sportsbook and handicap
+    by_sportsbook = {}
+    for odd in most_recent_odds.values():
+        sportsbook = odd['sportsbook']
+        if sportsbook not in by_sportsbook:
+            by_sportsbook[sportsbook] = {'over': {}, 'under': {}}
+        
+        side = odd['ou'].lower()
+        handicap = odd['handicap']
+        timestamp = datetime.strptime(str(odd['timestamp']), '%Y-%m-%d %H:%M:%S%z')
+        
+        by_sportsbook[sportsbook][side][handicap] = {
+            'odd': odd,
+            'timestamp': timestamp
+        }
+
+    # Find matching handicaps or most recent ones
+    filtered_odds = []
+    for sportsbook, sides in by_sportsbook.items():
+        over_handicaps = set(sides['over'].keys())
+        under_handicaps = set(sides['under'].keys())
+        
+        # Find matching handicaps
+        matching_handicaps = over_handicaps.intersection(under_handicaps)
+        
+        if matching_handicaps:
+            # Use the first matching handicap
+            handicap = next(iter(matching_handicaps))
+            filtered_odds.append(sides['over'][handicap]['odd'])
+            filtered_odds.append(sides['under'][handicap]['odd'])
+        else:
+            # Find the most recent handicap
+            all_entries = []
+            for handicap, data in sides['over'].items():
+                all_entries.append((handicap, data['timestamp'], 'over'))
+            for handicap, data in sides['under'].items():
+                all_entries.append((handicap, data['timestamp'], 'under'))
+            
+            if all_entries:
+                # Sort by timestamp and get the most recent
+                most_recent = max(all_entries, key=lambda x: x[1])
+                handicap = most_recent[0]
+                
+                # Add both sides for this handicap if they exist
+                if handicap in sides['over']:
+                    filtered_odds.append(sides['over'][handicap]['odd'])
+                if handicap in sides['under']:
+                    filtered_odds.append(sides['under'][handicap]['odd'])
+
     return filtered_odds
 
 def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None, team_name=None, line=False):
