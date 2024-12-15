@@ -59,6 +59,13 @@ def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit=
             if 'Unnamed: 0' in df.columns:
                 df = df.drop(columns=['Unnamed: 0'])
             df.columns = df.columns.str.lower().str.replace(' ', '_')
+            
+            # Format TOI and TOI/GP columns
+            toi_columns = [col for col in df.columns if 'toi' in col.lower()]
+            for col in toi_columns:
+                # Convert time format (MM:SS) to decimal minutes
+                df[col] = df[col].apply(lambda x: float(x.split(':')[0]) + float(x.split(':')[1])/60 if ':' in str(x) else x).round(2)
+                
             return df
         else:
             print("No tables found on the webpage.")
@@ -110,6 +117,13 @@ def nst_team_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2,
             if 'Unnamed: 0' in df.columns:
                 df = df.drop(columns=['Unnamed: 0'])
             df.columns = df.columns.str.lower().str.replace(' ', '_')
+            
+            # Format TOI and TOI/GP columns
+            toi_columns = [col for col in df.columns if 'toi' in col.lower()]
+            for col in toi_columns:
+                # Convert time format (MM:SS) to decimal minutes
+                df[col] = df[col].apply(lambda x: float(x.split(':')[0]) + float(x.split(':')[1])/60 if ':' in str(x) else x).round(2)
+                
             return df
         else:
             print("No tables found on the webpage.")
