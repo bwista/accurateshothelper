@@ -92,6 +92,32 @@ def get_fullname_by_tricode(tri_code: str) -> Optional[str]:
             return info.get('fullName')
     return None
 
+def nst_to_nhl_tricode(nst_abbreviation: str) -> Optional[str]:
+    """
+    Converts a Natural Stat Trick (NST) abbreviation to the standardized NHL tri-code abbreviation.
+
+    Parameters:
+        nst_abbreviation (str): The NST abbreviation to convert.
+
+    Returns:
+        Optional[str]: The corresponding NHL tri-code abbreviation if found, otherwise None.
+    """
+    nst_to_nhl_map = {
+        'MIN': 'MIN', 'NYR': 'NYR', 'ANA': 'ANA', 'BUF': 'BUF', 'NYI': 'NYI',
+        'N.J': 'NJD', 'L.A': 'LAK', 'DET': 'DET', 'FLA': 'FLA', 'EDM': 'EDM',
+        'COL': 'COL', 'NSH': 'NSH', 'SEA': 'SEA', 'CHI': 'CHI', 'CAR': 'CAR',
+        'OTT': 'OTT', 'STL': 'STL', 'T.B': 'TBL', 'BOS': 'BOS', 'TOR': 'TOR',
+        'WPG': 'WPG', 'PIT': 'PIT', 'VAN': 'VAN', 'S.J': 'SJS', 'CBJ': 'CBJ',
+        'CGY': 'CGY', 'MTL': 'MTL', 'VGK': 'VGK', 'UTA': 'UTA', 'PHI': 'PHI',
+        'DAL': 'DAL', 'WSH': 'WSH'
+    }
+
+    return nst_to_nhl_map.get(nst_abbreviation)
+
+# Example usage:
+# nhl_tricode = nst_to_nhl_tricode('N.J')
+# print(nhl_tricode)  # Output: NJD
+
 def get_team_roster(team_code: str, season: int) -> dict:
     """
     Retrieves the roster for a specific NHL team and season.

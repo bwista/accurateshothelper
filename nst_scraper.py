@@ -1,8 +1,9 @@
 import pandas as pd
 import requests
 from io import StringIO
+from team_utils import nst_to_nhl_tricode
 
-def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit='5v5', stdoi='std', pos='std', rate='n', loc='B'):
+def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit='5v5', stdoi='std', pos='std', rate='n', loc='B', lines='multi'):
     """
     Extracts player on-ice statistics from Natural Stat Trick for specified seasons and filtering conditions.
 
@@ -17,6 +18,7 @@ def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit=
         pos (str, optional): Type of player statistics to retrieve. Use 'std' for standard players or 'g' for goalies. Defaults to 'std'.
         rate (str, optional): Stat type, rate or count. Use 'n' or 'y'. Defaults to 'n'.
         loc (str, optional): Location filter. Use 'B' for both home and away, 'H' for home, or 'A' for away. Defaults to 'B'.
+        lines (str, optional): Whether to split or combine results for multi-team players. Use 'multi' for split and 'single' for combined. Defaults to 'multi'.
 
     Returns:
         df: A DataFrame containing the player on-ice statistics.
@@ -28,18 +30,18 @@ def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit=
     """
     if stdoi not in ['std', 'oi', 'g']:
         raise ValueError("stdoi must be either 'std' for individual stats, 'oi' for on-ice stats, or 'g' for goalies.")
-    # Validate pos input, std(skaters) or g(goalies)
     if pos not in ['std', 'g']:
         raise ValueError("pos must be either 'std' for standard players or 'g' for goalies.")
-    # Validate loc input
     if loc not in ['B', 'H', 'A']:
         raise ValueError("loc must be 'B' for both home and away, 'H' for home, or 'A' for away.")
+    if lines not in ['multi', 'single']:
+        raise ValueError("lines must be either 'multi' for split results or 'single' for combined results.")
 
     url = (
         f"https://www.naturalstattrick.com/playerteams.php?"
         f"fromseason={fromseason}&thruseason={thruseason}&stype={stype}&sit={sit}"
         f"&score=all&stdoi={stdoi}&rate={rate}&team=ALL&pos={pos}&loc={loc}&toi=0"
-        f"&gpfilt=none&fd={startdate}&td={enddate}&tgp=410&lines=single&draftteam=ALL"
+        f"&gpfilt=none&fd={startdate}&td={enddate}&tgp=410&lines={lines}&draftteam=ALL"
     )
 
     try:
@@ -59,6 +61,10 @@ def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit=
             if 'Unnamed: 0' in df.columns:
                 df = df.drop(columns=['Unnamed: 0'])
             df.columns = df.columns.str.lower().str.replace(' ', '_')
+            
+            # Convert team names using nst_to_nhl_tricode
+            if 'team' in df.columns:
+                df['team'] = df['team'].apply(nst_to_nhl_tricode)
             
             # Format TOI and TOI/GP columns
             toi_columns = [col for col in df.columns if 'toi' in col.lower()]
