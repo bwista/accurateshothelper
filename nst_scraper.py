@@ -3,7 +3,7 @@ import requests
 from io import StringIO
 from team_utils import nst_to_nhl_tricode
 
-def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit='5v5', stdoi='std', pos='std', rate='n', loc='B', lines='multi'):
+def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit='5v5', stdoi='std', pos='S', rate='n', loc='B', lines='multi'):
     """
     Extracts player on-ice statistics from Natural Stat Trick for specified seasons and filtering conditions.
 
@@ -15,7 +15,7 @@ def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit=
         stype (int, optional): Type of statistics to retrieve. Defaults to 2 for regular season.
         sit (str, optional): Situation type to filter by (e.g., '5v5'). Defaults to '5v5'.
         stdoi (str, optional): Statistic type of interest. Use 'std' for individual stats, 'oi' for on-ice stats, or 'g' for goalies. Defaults to 'std'.
-        pos (str, optional): Type of player statistics to retrieve. Use 'std' for standard players or 'g' for goalies. Defaults to 'std'.
+        pos (str, optional): Type of player statistics to retrieve. Use 'S' for skaters or 'G' for goalies. Defaults to 'S'.
         rate (str, optional): Stat type, rate or count. Use 'n' or 'y'. Defaults to 'n'.
         loc (str, optional): Location filter. Use 'B' for both home and away, 'H' for home, or 'A' for away. Defaults to 'B'.
         lines (str, optional): Whether to split or combine results for multi-team players. Use 'multi' for split and 'single' for combined. Defaults to 'multi'.
@@ -30,8 +30,8 @@ def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit=
     """
     if stdoi not in ['std', 'oi', 'g']:
         raise ValueError("stdoi must be either 'std' for individual stats, 'oi' for on-ice stats, or 'g' for goalies.")
-    if pos not in ['std', 'g']:
-        raise ValueError("pos must be either 'std' for standard players or 'g' for goalies.")
+    if pos not in ['S', 'G']:
+        raise ValueError("pos must be either 'S' for skaters or 'G' for goalies.")
     if loc not in ['B', 'H', 'A']:
         raise ValueError("loc must be 'B' for both home and away, 'H' for home, or 'A' for away.")
     if lines not in ['multi', 'single']:
@@ -41,7 +41,7 @@ def nst_on_ice_scraper(fromseason, thruseason, startdate, enddate, stype=2, sit=
         f"https://www.naturalstattrick.com/playerteams.php?"
         f"fromseason={fromseason}&thruseason={thruseason}&stype={stype}&sit={sit}"
         f"&score=all&stdoi={stdoi}&rate={rate}&team=ALL&pos={pos}&loc={loc}&toi=0"
-        f"&gpfilt=none&fd={startdate}&td={enddate}&tgp=410&lines={lines}&draftteam=ALL"
+        f"&gpfilt=gpdate&fd={startdate}&td={enddate}&lines={lines}&draftteam=ALL"
     )
 
     try:
