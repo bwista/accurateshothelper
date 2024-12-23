@@ -533,6 +533,10 @@ def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None,
     # Retrieve games from the database for the given date
     games = get_nhl_games_from_db(query_date, enable_logging=True)
 
+    if not games:
+        print(f"No games found in the game_info table for date {query_date}.")
+        return []
+
     # Filter games to find the game_id involving the specified team
     game_ids = []
     for game in games:
@@ -597,12 +601,22 @@ def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None,
                 odds_dict[key] = []
             odds_dict[key].append(odds)
 
+        if not odds_dict:
+            filters = []
+            if player_name:
+                filters.append(f"player '{player_name}'")
+            if sportsbook:
+                filters.append(f"sportsbook '{sportsbook}'")
+            if team_name:
+                filters.append(f"team '{team_name}'")
+            filter_str = " and ".join(filters)
+            print(f"No odds found in player_shots_ou table for game_ids {game_ids} with filters: {filter_str}")
+            return []
+
         # Filter for odds closest to +100 if the line flag is set
-        if line:
-            return filter_odds_closest_to_100(odds_dict)
-        else:
-            # Return all odds if filtering is not required
-            return [odds for odds_list in odds_dict.values() for odds in odds_list]
+        result = filter_odds_closest_to_100(odds_dict) if line else [odds for odds_list in odds_dict.values() for odds in odds_list]
+        logging.info("Completed retrieving player shots OU odds.")
+        return result
 
     except Exception as e:
         print("An error occurred:", e)
@@ -613,8 +627,6 @@ def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None,
             cursor.close()
         if conn:
             conn.close()
-    logging.info("Completed retrieving player shots OU odds.")
-    return odds
 
 def get_mismatched_game_ids_with_details(enable_logging=False):
     """
