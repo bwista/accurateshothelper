@@ -677,6 +677,9 @@ def get_mismatched_game_ids_with_details(enable_logging=False):
             logging.info(f"Game IDs only in game_info: {only_in_game_info}")
             logging.info(f"Game IDs only in player_shots_ou: {only_in_player_shots_ou}")
 
+        if enable_logging:
+            logging.info("Completed comparison of game_ids.")
+            
         return {
             'only_in_game_info': [
                 {
@@ -699,17 +702,3 @@ def get_mismatched_game_ids_with_details(enable_logging=False):
             cursor.close()
         if conn:
             conn.close()
-    if enable_logging:
-        logging.info("Completed comparison of game_ids.")
-    return {
-        'only_in_game_info': [
-            {
-                'game_id': row[0],
-                'away_team': row[1],
-                'home_team': row[2],
-                'start_timestamp': row[3].strftime('%Y-%m-%d')
-            }
-            for row in only_in_game_info
-        ],
-        'only_in_player_shots_ou': list(only_in_player_shots_ou)
-    }
