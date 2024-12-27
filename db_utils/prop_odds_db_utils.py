@@ -6,6 +6,13 @@ from utils import get_request  # Import from the new utils module
 from psycopg2.extras import execute_values  # Import execute_values
 import logging
 from team_utils import get_tricode_by_fullname
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import psycopg2.pool
+from functools import partial
+import os
+import time
+import threading
+from queue import Queue
 
 DB_PREFIX = 'PROP_ODDS_DB_'
 
@@ -16,6 +23,57 @@ API_KEY = '5DQv4UzUztm6itoSLRaFdXDi5Dt4zGNFT1DvEFh0D0M'
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Create a connection pool
+connection_pool = None
+
+# Add rate limiting configuration
+API_RATE_LIMIT = 2  # requests per second
+api_request_times = Queue()
+api_lock = threading.Lock()
+
+def init_connection_pool(min_conn=2, max_conn=10):
+    """Initialize the connection pool for database operations."""
+    global connection_pool
+    if connection_pool is None:
+        logging.info(f"Initializing connection pool with min_conn={min_conn}, max_conn={max_conn}")
+        try:
+            connection_pool = psycopg2.pool.SimpleConnectionPool(
+                min_conn,
+                max_conn,
+                dbname=os.getenv('PROP_ODDS_DB_NAME'),
+                user=os.getenv('PROP_ODDS_DB_USER'),
+                password=os.getenv('PROP_ODDS_DB_PASSWORD'),
+                host=os.getenv('PROP_ODDS_DB_HOST'),
+                port=os.getenv('PROP_ODDS_DB_PORT')
+            )
+            logging.info("Successfully initialized connection pool")
+        except Exception as e:
+            logging.error(f"Failed to initialize connection pool: {e}")
+            logging.error(f"Error type: {type(e)}")
+            return None
+    return connection_pool
+
+def get_pooled_connection():
+    """Get a connection from the pool."""
+    global connection_pool
+    if connection_pool is None:
+        logging.info("Connection pool not initialized, initializing now")
+        init_connection_pool()
+    try:
+        conn = connection_pool.getconn()
+        logging.info("Successfully got connection from pool")
+        return conn
+    except Exception as e:
+        logging.error(f"Failed to get connection from pool: {e}")
+        logging.error(f"Error type: {type(e)}")
+        return None
+
+def return_connection(conn):
+    """Return a connection to the pool."""
+    global connection_pool
+    if connection_pool is not None:
+        connection_pool.putconn(conn)
 
 def get_prop_odds_db_connection():
     logging.info("Establishing Prop Odds DB connection.")
@@ -178,36 +236,39 @@ def get_nhl_games_from_db(query_date=None, enable_logging=False):
 
 # get_nhl_games_from_db('2024-12-11')
 
+def rate_limited_api_request(url, enable_logging=False):
+    """Make an API request with rate limiting."""
+    with api_lock:
+        current_time = time.time()
+        
+        # Remove old request timestamps
+        while not api_request_times.empty():
+            old_time = api_request_times.get()
+            if current_time - old_time < 1:  # Keep requests within last second
+                api_request_times.put(old_time)
+                break
+        
+        # Check if we've hit the rate limit
+        if api_request_times.qsize() >= API_RATE_LIMIT:
+            sleep_time = 1.0 - (current_time - api_request_times.queue[0])
+            if sleep_time > 0:
+                if enable_logging:
+                    logging.info(f"Rate limit reached, waiting {sleep_time:.2f} seconds")
+                time.sleep(sleep_time)
+        
+        # Make the request
+        response = get_request(url, enable_logging=enable_logging)
+        api_request_times.put(time.time())
+        return response
+
 def fetch_game_markets(game_id, market_name=None, enable_logging=False):
-    """
-    Fetch game markets for a given game ID and optionally a specific market name, then store them in the database.
-
-    Args:
-        game_id (str): The unique identifier for the game.
-        market_name (str, optional): The specific market to fetch. Defaults to None, which fetches all markets.
-        enable_logging (bool, optional): If True, enables logging. Defaults to False.
-
-    Returns:
-        dict: The market data retrieved from the API.
-    """
-    if enable_logging:
-        logging.info(f"Fetching game markets for game_id: {game_id}, market_name: {market_name}")
+    """Fetch game markets with rate limiting."""
     if market_name is not None:
         url = f"{BASE_URL}/beta/odds/{game_id}/{market_name}?api_key={API_KEY}"
     else:
         url = f"{BASE_URL}/beta/markets/{game_id}?api_key={API_KEY}"
-
-    # Use the get_request function from utils.py
-    market_data = get_request(url, enable_logging=enable_logging)
-
-    if market_data is not None:
-        if enable_logging:
-            logging.info("Completed fetching game markets.")
-        return market_data
-    else:
-        print("Failed to retrieve market data.")
-        return None
-# fetch_game_markets('c1fa7d3f30fdb408b78917509d1633c3')
+    
+    return rate_limited_api_request(url, enable_logging=enable_logging)
 
 def format_player_name(name):
     """
@@ -383,36 +444,304 @@ def process_game_markets(query_date, team_abbr, market_name='player_shots_over_u
     if enable_logging:
         logging.info("Completed processing game markets.")
 
-def process_nhl_games_for_date(date, market='player_shots_over_under', enable_logging=False):
-    """
-    Processes NHL games for a specific date and market, inserting outcomes into the database.
+def process_team_markets_optimized(date, team_abbr, game_id, market_name='player_shots_over_under', enable_logging=False):
+    """Optimized version of process_game_markets that uses a pooled connection."""
+    if enable_logging:
+        logging.info(f"Processing markets for team {team_abbr} on {date}")
+    
+    conn = None
+    cursor = None
+    try:
+        if enable_logging:
+            logging.info("Attempting to get database connection from pool")
+        conn = get_pooled_connection()
+        if not conn:
+            if enable_logging:
+                logging.error("Failed to get connection from pool")
+            return
+            
+        if enable_logging:
+            logging.info("Successfully got database connection from pool")
+        
+        # Verify table exists
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM pg_catalog.pg_tables 
+                WHERE schemaname = 'public'
+                AND tablename = 'player_shots_ou'
+            );
+        """)
+        table_exists = cursor.fetchone()[0]
+        if not table_exists:
+            if enable_logging:
+                logging.error("Table player_shots_ou does not exist in public schema")
+                # List all tables in public schema
+                cursor.execute("""
+                    SELECT tablename 
+                    FROM pg_catalog.pg_tables 
+                    WHERE schemaname = 'public';
+                """)
+                tables = cursor.fetchall()
+                logging.error(f"Available tables in public schema: {[t[0] for t in tables]}")
+            return
+        
+        # Fetch game markets for the game_id with timeout and retries
+        max_retries = 3
+        retry_count = 0
+        data = None
+        
+        while retry_count < max_retries and not data:
+            try:
+                if enable_logging:
+                    logging.info(f"Fetching markets for game {game_id} (attempt {retry_count + 1})")
+                data = fetch_game_markets(game_id, market_name, enable_logging=enable_logging)
+                if not data and retry_count < max_retries - 1:
+                    retry_count += 1
+                    wait_time = 2 ** retry_count  # Exponential backoff
+                    if enable_logging:
+                        logging.warning(f"Retry {retry_count} for game {game_id}, waiting {wait_time} seconds")
+                    time.sleep(wait_time)
+            except Exception as e:
+                if enable_logging:
+                    logging.error(f"Error fetching markets (attempt {retry_count + 1}): {e}")
+                retry_count += 1
+                if retry_count < max_retries:
+                    time.sleep(2 ** retry_count)
+        
+        if not data:
+            if enable_logging:
+                logging.error(f"Failed to fetch market data for game {game_id} after {max_retries} attempts")
+            return
+        
+        if enable_logging:
+            logging.info(f"Successfully fetched market data for game {game_id}")
+        
+        # Process the market data
+        supported_bookies = ['fanduel', 'pinnacle', 'draftkings', 'betmgm', 'barstool',
+                           'betrivers', 'pointsbet', 'fliff', 'hardrock', 'betonline', 'fanatics']
+        
+        # Prepare batch insert data
+        batch_data = []
+        for sportsbook in data.get('sportsbooks', []):
+            bookie_key = sportsbook.get('bookie_key')
+            if not bookie_key or bookie_key not in supported_bookies:
+                continue
+                
+            market = sportsbook.get('market', {})
+            for outcome in market.get('outcomes', []):
+                name = outcome.get('name')
+                if not name:
+                    continue
+                    
+                player_name, over_under = format_player_name(name)
+                if not player_name or not over_under:
+                    if enable_logging:
+                        logging.warning(f"Invalid outcome name format: {name}")
+                    continue
+                
+                handicap = outcome.get('handicap')
+                odds = outcome.get('odds')
+                timestamp = outcome.get('timestamp')
+                
+                if None in (handicap, odds, timestamp):
+                    if enable_logging:
+                        logging.warning(f"Missing required data for outcome: {outcome}")
+                    continue
+                
+                try:
+                    # Convert timestamp string to datetime if it's not already
+                    if isinstance(timestamp, str):
+                        timestamp = datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%S')
+                    
+                    batch_data.append((
+                        game_id,
+                        bookie_key,
+                        player_name,
+                        over_under,
+                        float(handicap),  # Ensure handicap is float
+                        int(odds),        # Ensure odds is integer
+                        timestamp
+                    ))
+                except (ValueError, TypeError) as e:
+                    if enable_logging:
+                        logging.error(f"Data conversion error for outcome {outcome}: {e}")
+                    continue
+        
+        if enable_logging:
+            logging.info(f"Prepared {len(batch_data)} records for insertion")
+        
+        # Batch insert using execute_values
+        if batch_data:
+            try:
+                if enable_logging:
+                    logging.info("Creating database cursor")
+                cursor = conn.cursor()
+                
+                insert_query = """
+                    INSERT INTO player_shots_ou (
+                        game_id, sportsbook, player, ou, handicap, odds, timestamp
+                    ) VALUES %s
+                    ON CONFLICT (game_id, sportsbook, player, ou, handicap, odds, timestamp) 
+                    DO NOTHING
+                """
+                
+                if enable_logging:
+                    logging.info(f"Executing batch insert of {len(batch_data)} records")
+                    if batch_data:
+                        logging.info(f"Sample record: {batch_data[0]}")
+                
+                execute_values(cursor, insert_query, batch_data, page_size=100)
+                
+                if enable_logging:
+                    logging.info("Committing transaction")
+                conn.commit()
+                
+                if enable_logging:
+                    logging.info(f"Successfully inserted {len(batch_data)} records for game {game_id}")
+            except Exception as e:
+                if enable_logging:
+                    logging.error(f"Error during database insertion: {str(e)}")
+                    logging.error(f"Error type: {type(e)}")
+                if conn and not conn.closed:
+                    conn.rollback()
+                raise
+            finally:
+                if cursor and not cursor.closed:
+                    cursor.close()
+    except Exception as e:
+        if enable_logging:
+            logging.error(f"Error processing team markets: {str(e)}")
+            logging.error(f"Error type: {type(e)}")
+        if conn and not conn.closed:
+            conn.rollback()
+    finally:
+        if cursor and not cursor.closed:
+            cursor.close()
+        if conn:
+            if enable_logging:
+                logging.info("Returning connection to pool")
+            return_connection(conn)
 
+def process_nhl_games_for_date_optimized(date, market='player_shots_over_under', enable_logging=False, max_workers=2):
+    """
+    Optimized version of process_nhl_games_for_date using parallel processing and connection pooling.
+    
     Parameters:
         date (str): The date to query in 'YYYY-MM-DD' format.
         market (str): The market name to fetch. Defaults to 'player_shots_over_under'.
         enable_logging (bool): If True, enables logging. Defaults to False.
+        max_workers (int): Maximum number of parallel workers. Defaults to 2.
     """
     if enable_logging:
         logging.info(f"Processing NHL games for date: {date}, market: {market}")
-    # Retrieve games from the database for the given date
-    games = get_nhl_games_from_db(date, enable_logging=enable_logging)
     
-    # If no games are found, fetch and store games for the date
-    if not games:
-        if enable_logging:
-            logging.info(f"No games found in the database for date {date}. Fetching from API.")
-        fetch_and_store_nhl_games(date, enable_logging=enable_logging)
-        games = get_nhl_games_from_db(date, enable_logging=enable_logging)
+    # Initialize connection pool
+    init_connection_pool()
     
-    # Process each game
-    for game in games:
-        game_id = game['game_id']
-        away_team_abbr = get_tricode_by_fullname(game['away_team'])
-        home_team_abbr = get_tricode_by_fullname(game['home_team'])
+    try:
+        # Get games using a pooled connection
+        conn = get_pooled_connection()
+        if not conn:
+            if enable_logging:
+                logging.error("Failed to get connection from pool")
+            return
+            
+        # Verify table exists
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM pg_catalog.pg_tables 
+                WHERE schemaname = 'public'
+                AND tablename = 'player_shots_ou'
+            );
+        """)
+        table_exists = cursor.fetchone()[0]
+        if not table_exists:
+            if enable_logging:
+                logging.error("Table player_shots_ou does not exist in public schema")
+                # List all tables in public schema
+                cursor.execute("""
+                    SELECT tablename 
+                    FROM pg_catalog.pg_tables 
+                    WHERE schemaname = 'public';
+                """)
+                tables = cursor.fetchall()
+                logging.error(f"Available tables in public schema: {[t[0] for t in tables]}")
+            return
         
-        # Process markets for both teams
-        for team_abbr in (away_team_abbr, home_team_abbr):
-            process_game_markets(date, team_abbr, market_name=market, enable_logging=enable_logging)
+        games = get_nhl_games_from_db(date, enable_logging=enable_logging)
+        
+        if not games:
+            if enable_logging:
+                logging.info(f"No games found in the database for date {date}. Fetching from API.")
+            fetch_and_store_nhl_games(date, enable_logging=enable_logging)
+            games = get_nhl_games_from_db(date, enable_logging=enable_logging)
+        
+        if not games:
+            if enable_logging:
+                logging.warning(f"No games found for date {date}")
+            return
+        
+        # Prepare tasks for parallel processing
+        tasks = []
+        for game in games:
+            game_id = game['game_id']
+            away_team_abbr = get_tricode_by_fullname(game['away_team'])
+            home_team_abbr = get_tricode_by_fullname(game['home_team'])
+            
+            # Add tasks for both teams
+            for team_abbr in (away_team_abbr, home_team_abbr):
+                tasks.append((date, team_abbr, game_id))
+        
+        if enable_logging:
+            logging.info(f"Processing {len(tasks)} tasks with {max_workers} workers")
+        
+        # Process tasks in parallel with progress tracking
+        completed_tasks = 0
+        failed_tasks = 0
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            process_func = partial(
+                process_team_markets_optimized,
+                market_name=market,
+                enable_logging=enable_logging
+            )
+            
+            futures = [executor.submit(process_func, *task) for task in tasks]
+            
+            for future in as_completed(futures):
+                try:
+                    future.result(timeout=60)  # 60 second timeout for each task
+                    completed_tasks += 1
+                    if enable_logging:
+                        logging.info(f"Completed {completed_tasks}/{len(tasks)} tasks")
+                except Exception as e:
+                    failed_tasks += 1
+                    if enable_logging:
+                        logging.error(f"Task failed: {e}")
+                        logging.error(f"Error type: {type(e)}")
+        
+        if enable_logging:
+            logging.info(f"Completed {completed_tasks}/{len(tasks)} tasks, {failed_tasks} failed")
+        
+    except Exception as e:
+        if enable_logging:
+            logging.error(f"Error in process_nhl_games_for_date_optimized: {e}")
+            logging.error(f"Error type: {type(e)}")
+        if conn and not conn.closed:
+            conn.rollback()
+    finally:
+        if cursor and not cursor.closed:
+            cursor.close()
+        if conn:
+            if enable_logging:
+                logging.info("Returning connection to pool")
+            return_connection(conn)
+        # Clean up connection pool
+        if connection_pool is not None:
+            connection_pool.closeall()
+    
     if enable_logging:
         logging.info("Completed processing NHL games for date.")
 

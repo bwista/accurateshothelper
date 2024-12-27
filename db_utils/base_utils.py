@@ -22,6 +22,9 @@ def get_db_connection(db_prefix):
     db_user = os.getenv(f'{db_prefix}USER')
     db_password = os.getenv(f'{db_prefix}PASSWORD')
 
+    # Debug log the connection details (without password)
+    logger.info(f"Attempting connection with: host={db_host}, port={db_port}, dbname={db_name}, user={db_user}")
+
     try:
         conn = psycopg2.connect(
             host=db_host,
@@ -31,6 +34,7 @@ def get_db_connection(db_prefix):
             password=db_password
         )
         cursor = conn.cursor()
+        logger.info("Successfully established database connection")
         return conn, cursor
     except Exception as e:
         logger.error(f"Failed to connect to the {db_prefix[:-1]} database: {e}")
