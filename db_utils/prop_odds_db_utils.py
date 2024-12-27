@@ -702,3 +702,113 @@ def get_mismatched_game_ids_with_details(enable_logging=False):
             cursor.close()
         if conn:
             conn.close()
+
+def get_last_game_game_info(enable_logging=False):
+    """
+    Get the most recent game's start timestamp from the game_info table.
+
+    Args:
+        enable_logging (bool): If True, enables logging. Defaults to False.
+
+    Returns:
+        str: The most recent game's start timestamp in format 'YYYY-MM-DD HH:MM:SS', or None if no games found.
+    """
+    if enable_logging:
+        logging.info("Retrieving most recent game start timestamp from game_info table.")
+    try:
+        # Establish a database connection
+        conn, cursor = get_db_connection('PROP_ODDS_DB_')
+        if not conn or not cursor:
+            if enable_logging:
+                logging.error("Failed to establish a database connection.")
+            return None
+
+        # Query for the most recent start timestamp
+        cursor.execute("""
+            SELECT start_timestamp 
+            FROM game_info 
+            ORDER BY start_timestamp DESC 
+            LIMIT 1
+        """)
+        result = cursor.fetchone()
+
+        if result:
+            # Format the timestamp as a readable string
+            formatted_timestamp = result[0].strftime('%Y-%m-%d %H:%M:%S')
+            if enable_logging:
+                logging.info(f"Found most recent game timestamp: {formatted_timestamp}")
+            return formatted_timestamp
+        else:
+            if enable_logging:
+                logging.warning("No games found in game_info table.")
+            return None
+
+    except Exception as e:
+        if enable_logging:
+            logging.error("An error occurred while retrieving last game timestamp: %s", e)
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+def get_last_game_player_shots_db(enable_logging=False):
+    """
+    Get the most recent game's information from games that have player shot data.
+
+    Args:
+        enable_logging (bool): If True, enables logging. Defaults to False.
+
+    Returns:
+        dict: A dictionary containing game_id, away_team, home_team, and start_timestamp (formatted),
+              or None if no games found.
+    """
+    if enable_logging:
+        logging.info("Retrieving most recent game info for games with player shot data.")
+    try:
+        # Establish a database connection
+        conn, cursor = get_db_connection('PROP_ODDS_DB_')
+        if not conn or not cursor:
+            if enable_logging:
+                logging.error("Failed to establish a database connection.")
+            return None
+
+        # Query for the most recent game info that has player shot data
+        cursor.execute("""
+            SELECT DISTINCT gi.game_id, gi.away_team, gi.home_team, gi.start_timestamp
+            FROM game_info gi
+            INNER JOIN (
+                SELECT DISTINCT game_id 
+                FROM player_shots_ou
+            ) pso ON gi.game_id = pso.game_id
+            ORDER BY gi.start_timestamp DESC
+            LIMIT 1
+        """)
+        result = cursor.fetchone()
+
+        if result:
+            # Format the data into a dictionary
+            game_info = {
+                'game_id': result[0],
+                'away_team': result[1],
+                'home_team': result[2],
+                'start_timestamp': result[3].strftime('%Y-%m-%d %H:%M:%S')
+            }
+            if enable_logging:
+                logging.info(f"Found most recent game info: {game_info}")
+            return game_info
+        else:
+            if enable_logging:
+                logging.warning("No games found with player shot data.")
+            return None
+
+    except Exception as e:
+        if enable_logging:
+            logging.error("An error occurred while retrieving last game info: %s", e)
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
