@@ -6,8 +6,18 @@ from typing import Dict, Optional
 
 API_URL = 'https://api-web.nhle.com/'
 
-# Creating a dictionary to store the NHL team information
 def get_team_info():
+    """
+    Retrieves NHL team information from the NHL API.
+
+    Makes a request to the NHL API to get team data and creates a dictionary mapping 
+    team IDs to team information including full name and triCode (abbreviation).
+
+    Returns:
+        dict: A dictionary where keys are team IDs and values are dictionaries containing:
+            - fullName (str): The full name of the team
+            - triCode (str): The three letter abbreviation code for the team
+    """
     nhl_teams = {}
     # https://api.nhle.com/stats/rest/en/team
     response = requests.get(f"{API_URL}/stats/rest/en/team", params={"Content-Type": "application/json"})
