@@ -5,3 +5,4 @@ __pycache__/
 earlygameoracle.code-workspace
 .DS_Store
 *.env
+*.backup

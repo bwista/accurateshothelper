@@ -13,6 +13,7 @@ import os
 import time
 import threading
 from queue import Queue
+from fuzzywuzzy import fuzz
 
 DB_PREFIX = 'PROP_ODDS_DB_'
 
@@ -837,17 +838,18 @@ def filter_odds_closest_to_100(odds_dict):
 
     return filtered_odds
 
-def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None, team_name=None, line=False):
+def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None, team_name=None, line=False, fuzzy_threshold=85):
     """
     Retrieve player shot over/under odds from the PostgreSQL prop_odds database
-    based on a specific player name, sportsbook, and/or team name.
+    with fuzzy matching for player names.
 
     Args:
         player_name (str, optional): The full name of the player to filter odds by.
-        query_date (str, optional): The date to query in 'YYYY-MM-DD' format. Used to retrieve games. Defaults to today.
+        query_date (str, optional): The date to query in 'YYYY-MM-DD' format. Used to retrieve games.
         sportsbook (str, optional): The name of the sportsbook to filter odds by.
         team_name (str, optional): The full name of the team to filter games by.
         line (bool, optional): If True, filters odds to find those closest to +100. Defaults to False.
+        fuzzy_threshold (int, optional): Minimum similarity score for fuzzy matching (0-100). Defaults to 85.
 
     Returns:
         list: A list of dictionaries containing player shot OU odds.
@@ -883,6 +885,32 @@ def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None,
             print("Database connection failed.")
             return []
 
+        # If player_name is provided, first get all distinct player names from the database
+        # for the specified game_ids to perform fuzzy matching
+        if player_name:
+            cursor.execute("""
+                SELECT DISTINCT player 
+                FROM player_shots_ou 
+                WHERE game_id = ANY(%s)
+            """, (game_ids,))
+            db_players = [row[0] for row in cursor.fetchall()]
+            
+            # Perform fuzzy matching to find the best match
+            best_match = None
+            best_score = 0
+            for db_player in db_players:
+                score = fuzz.ratio(player_name.lower(), db_player.lower())
+                if score > best_score and score >= fuzzy_threshold:
+                    best_score = score
+                    best_match = db_player
+            
+            if best_match:
+                logging.info(f"Fuzzy matched '{player_name}' to '{best_match}' with score {best_score}")
+                player_name = best_match
+            else:
+                logging.warning(f"No fuzzy match found for player '{player_name}' above threshold {fuzzy_threshold}")
+                return []
+
         # Initialize the base query
         base_query = """
             SELECT 
@@ -902,14 +930,14 @@ def get_player_shots_ou_odds(player_name=None, query_date=None, sportsbook=None,
 
         # Add filters based on provided arguments
         if player_name:
-            base_query += " AND pso.player ILIKE %s"
+            base_query += " AND pso.player = %s"  # Use exact match since we've already done fuzzy matching
             params.append(player_name)
         
         if sportsbook:
             base_query += " AND pso.sportsbook ILIKE %s"
             params.append(sportsbook)
 
-        # Execute the query with parameters
+        # Rest of the function remains the same...
         cursor.execute(base_query, tuple(params))
         rows = cursor.fetchall()
 
