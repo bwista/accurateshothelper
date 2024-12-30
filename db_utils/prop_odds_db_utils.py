@@ -18,8 +18,8 @@ from fuzzywuzzy import fuzz
 DB_PREFIX = 'PROP_ODDS_DB_'
 
 BASE_URL = 'https://api.prop-odds.com'
-API_KEY = '5DQv4UzUztm6itoSLRaFdXDi5Dt4zGNFT1DvEFh0D0M'
-# API_KEY = 'EEfdxYtFG2BgeCA2xDfM8KMgHvZVbYEaDGS5lCd38U'
+# API_KEY = '5DQv4UzUztm6itoSLRaFdXDi5Dt4zGNFT1DvEFh0D0M'
+API_KEY = 'EEfdxYtFG2BgeCA2xDfM8KMgHvZVbYEaDGS5lCd38U'
 # API_KEY = '9WnS02ST9fLkXsMZgFQKBJdzGwdtIt5yx0s7YFrHfc'
 
 # Configure logging
