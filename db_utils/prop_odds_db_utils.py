@@ -636,8 +636,10 @@ def process_nhl_games_for_date_optimized(date, market='player_shots_over_under',
     if enable_logging:
         logging.info(f"Processing NHL games for date: {date}, market: {market}")
     
-    # Initialize connection pool
-    init_connection_pool()
+    # Initialize connection pool if it doesn't exist
+    global connection_pool
+    if connection_pool is None:
+        init_connection_pool()
     
     try:
         # Get games using a pooled connection
@@ -738,9 +740,7 @@ def process_nhl_games_for_date_optimized(date, market='player_shots_over_under',
             if enable_logging:
                 logging.info("Returning connection to pool")
             return_connection(conn)
-        # Clean up connection pool
-        if connection_pool is not None:
-            connection_pool.closeall()
+        # Remove the connection pool cleanup from here
     
     if enable_logging:
         logging.info("Completed processing NHL games for date.")
