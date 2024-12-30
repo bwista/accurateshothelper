@@ -1141,3 +1141,53 @@ def get_last_game_player_shots_db(enable_logging=False):
             cursor.close()
         if conn:
             conn.close()
+
+def get_first_game_game_info(enable_logging=False):
+    """
+    Get the earliest game's start timestamp from the game_info table.
+
+    Args:
+        enable_logging (bool): If True, enables logging. Defaults to False.
+
+    Returns:
+        str: The earliest game's start timestamp in format 'YYYY-MM-DD HH:MM:SS', or None if no games found.
+    """
+    if enable_logging:
+        logging.info("Retrieving earliest game start timestamp from game_info table.")
+    try:
+        # Establish a database connection
+        conn, cursor = get_db_connection('PROP_ODDS_DB_')
+        if not conn or not cursor:
+            if enable_logging:
+                logging.error("Failed to establish a database connection.")
+            return None
+
+        # Query for the earliest start timestamp
+        cursor.execute("""
+            SELECT start_timestamp 
+            FROM game_info 
+            ORDER BY start_timestamp ASC 
+            LIMIT 1
+        """)
+        result = cursor.fetchone()
+
+        if result:
+            # Format the timestamp as a readable string
+            formatted_timestamp = result[0].strftime('%Y-%m-%d %H:%M:%S')
+            if enable_logging:
+                logging.info(f"Found earliest game timestamp: {formatted_timestamp}")
+            return formatted_timestamp
+        else:
+            if enable_logging:
+                logging.warning("No games found in game_info table.")
+            return None
+
+    except Exception as e:
+        if enable_logging:
+            logging.error("An error occurred while retrieving first game timestamp: %s", e)
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
