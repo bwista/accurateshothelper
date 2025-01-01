@@ -11,8 +11,9 @@ from fuzzywuzzy import fuzz
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # API Configuration
-API_KEY = '2d61bfcd50b060d771fec317f16bf249'
+API_KEY = '9a5c793d56cca6f031c468dc649e054d'
 API_BASE_URL = 'https://api.the-odds-api.com/v4/sports/icehockey_nhl'
+API_HISTORICAL_URL = 'https://api.the-odds-api.com/v4/historical/sports/icehockey_nhl'
 
 def filter_odds_closest_to_100(odds_dict):
     """
@@ -91,12 +92,13 @@ def filter_odds_closest_to_100(odds_dict):
 
     return filtered_odds
 
-def fetch_and_store_nhl_games(date, enable_logging=False):
+def fetch_and_store_nhl_games(date=None, enable_logging=False):
     """
     Fetch NHL events from the_odds API and store them in the PostgreSQL database.
+    Uses historical API if date is provided, otherwise uses current events API.
 
     Args:
-        date (str): The date to fetch events for in ISO8601 format (e.g. '2024-12-31')
+        date (str, optional): The date to fetch events for in 'YYYY-MM-DD' format. If not provided, uses current events.
         enable_logging (bool): If True, enables logging. Defaults to False.
 
     Returns:
@@ -105,11 +107,34 @@ def fetch_and_store_nhl_games(date, enable_logging=False):
     if enable_logging:
         logging.info(f"Fetching and storing NHL events for date: {date}")
 
+    # Determine if we should use historical API
+    today = datetime.now().strftime('%Y-%m-%d')
+    use_historical = date is not None and date != today
+
     # Construct API URL for NHL events
-    url = f"{API_BASE_URL}/events?apiKey={API_KEY}"
+    if use_historical:
+        # Convert date to timestamp format required by historical API
+        date_obj = datetime.strptime(date, '%Y-%m-%d')
+        # Set time to end of day to get the latest data for that date
+        date_obj = date_obj.replace(hour=23, minute=59, second=59)
+        query_params = {
+            'apiKey': API_KEY,
+            'date': date_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+        }
+        query_string = urllib.parse.urlencode(query_params)
+        url = f"{API_HISTORICAL_URL}/events?{query_string}"
+        if enable_logging:
+            logging.info(f"Using historical API for date: {date}")
+    else:
+        url = f"{API_BASE_URL}/events?apiKey={API_KEY}"
+        if enable_logging:
+            logging.info("Using current events API")
     
     # Get the events data from the API
-    events_data = get_request(url)
+    response_data = get_request(url)
+    
+    # For historical API, the events are nested in the 'data' field
+    events_data = response_data.get('data', response_data) if use_historical else response_data
 
     if not events_data:
         if enable_logging:
@@ -178,7 +203,7 @@ def fetch_and_store_nhl_games(date, enable_logging=False):
 
     if enable_logging:
         logging.info("Completed fetching and storing events.")
-    return events_data 
+    return events_data
 
 def get_nhl_events_from_db(query_date=None, enable_logging=False):
     """
@@ -385,16 +410,25 @@ def get_player_sog_odds(player_name=None, query_date=None, sportsbook=None, team
         if conn:
             conn.close() 
 
-def process_sog_markets(game_id, enable_logging=False):
+def process_sog_markets(game_id, query_date=None, enable_logging=False):
     """
     Fetches and processes player shots on goal markets from the_odds API for a specific game.
+    Uses historical odds if query_date is not today.
     
     Args:
         game_id (str): The game ID to fetch markets for.
+        query_date (str, optional): The date to query in 'YYYY-MM-DD' format. If not provided or is today, uses live odds.
         enable_logging (bool): If True, enables logging. Defaults to False.
     """
     if enable_logging:
         logging.info(f"Processing SOG markets for game: {game_id}")
+
+    # Get current timestamp without fractional seconds for scraped_at
+    current_time = datetime.now().replace(microsecond=0)
+
+    # Determine if we should use historical odds
+    today = datetime.now().strftime('%Y-%m-%d')
+    use_historical = query_date is not None and query_date != today
 
     # Construct API URL for player shots on goal markets
     query_params = {
@@ -403,13 +437,31 @@ def process_sog_markets(game_id, enable_logging=False):
         'markets': 'player_shots_on_goal',
         'oddsFormat': 'american'
     }
+
+    # Add date parameter for historical odds
+    if use_historical:
+        # Convert date to timestamp format required by historical API
+        query_date_obj = datetime.strptime(query_date, '%Y-%m-%d')
+        # Set time to end of day to get the latest odds for that date
+        query_date_obj = query_date_obj.replace(hour=23, minute=59, second=59)
+        query_params['date'] = query_date_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+        base_url = f"{API_HISTORICAL_URL}/events/{game_id}/odds"
+        if enable_logging:
+            logging.info(f"Using historical odds for date: {query_date}")
+    else:
+        base_url = f"{API_BASE_URL}/events/{game_id}/odds"
+        if enable_logging:
+            logging.info("Using live odds")
     
     # Construct URL with query parameters
     query_string = urllib.parse.urlencode(query_params)
-    url = f"{API_BASE_URL}/events/{game_id}/odds?{query_string}"
+    url = f"{base_url}?{query_string}"
     
     # Get the markets data from the API
-    markets_data = get_request(url)
+    response_data = get_request(url)
+    
+    # For historical odds, the actual odds data is nested in the 'data' field
+    markets_data = response_data.get('data', response_data) if use_historical else response_data
 
     if not markets_data or 'bookmakers' not in markets_data:
         if enable_logging:
@@ -433,20 +485,22 @@ def process_sog_markets(game_id, enable_logging=False):
                 market_type,
                 handicap,
                 price,
-                last_update
+                last_update,
+                scraped_at
             )
             VALUES %s
             ON CONFLICT (game_id, sportsbook, player_name, market_type, handicap) 
             DO UPDATE SET
                 price = EXCLUDED.price,
-                last_update = EXCLUDED.last_update;
+                last_update = EXCLUDED.last_update,
+                scraped_at = CURRENT_TIMESTAMP(0);
         """
 
         # Process bookmakers and their markets
         records_to_insert = []
         for bookmaker in markets_data['bookmakers']:
             sportsbook = bookmaker['key']
-            last_update = bookmaker['markets'][0]['last_update']  # Using market's last_update
+            last_update = bookmaker['last_update']  # Get bookmaker's last_update
 
             for market in bookmaker['markets']:
                 if market['key'] != 'player_shots_on_goal':
@@ -465,7 +519,8 @@ def process_sog_markets(game_id, enable_logging=False):
                         market_type,
                         handicap,
                         price,
-                        last_update
+                        last_update,
+                        current_time  # Add scraped_at timestamp
                     )
                     records_to_insert.append(record)
 
@@ -511,9 +566,13 @@ def process_all_sog_markets(query_date=None, enable_logging=False):
             logging.warning(f"No games found for date {query_date}")
         return
 
-    # Process markets for each game
+    # Process markets for each game using its commence_time
     for game in games:
-        process_sog_markets(game['id'], enable_logging=enable_logging)
+        # Convert commence_time to YYYY-MM-DD format for the API
+        game_date = game['commence_time'].strftime('%Y-%m-%d')
+        if enable_logging:
+            logging.info(f"Processing game {game['id']} scheduled for {game_date}")
+        process_sog_markets(game['id'], query_date=game_date, enable_logging=enable_logging)
 
     if enable_logging:
         logging.info(f"Completed processing all SOG markets for date {query_date}") 
