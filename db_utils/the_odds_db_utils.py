@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import os
 import urllib.parse
@@ -417,7 +417,8 @@ def process_sog_markets(game_id, query_date=None, enable_logging=False):
     
     Args:
         game_id (str): The game ID to fetch markets for.
-        query_date (str, optional): The date to query in 'YYYY-MM-DD' format. If not provided or is today, uses live odds.
+        query_date (datetime or str, optional): The datetime in UTC for historical odds, or date string in 'YYYY-MM-DD' format.
+                                              If not provided or is today, uses live odds.
         enable_logging (bool): If True, enables logging. Defaults to False.
     """
     if enable_logging:
@@ -428,7 +429,10 @@ def process_sog_markets(game_id, query_date=None, enable_logging=False):
 
     # Determine if we should use historical odds
     today = datetime.now().strftime('%Y-%m-%d')
-    use_historical = query_date is not None and query_date != today
+    use_historical = query_date is not None and (
+        isinstance(query_date, datetime) or 
+        (isinstance(query_date, str) and query_date != today)
+    )
 
     # Construct API URL for player shots on goal markets
     query_params = {
@@ -440,20 +444,23 @@ def process_sog_markets(game_id, query_date=None, enable_logging=False):
 
     # Add date parameter for historical odds
     if use_historical:
-        # Convert date to timestamp format required by historical API
-        query_date_obj = datetime.strptime(query_date, '%Y-%m-%d')
-        # Set time to end of day to get the latest odds for that date
-        query_date_obj = query_date_obj.replace(hour=23, minute=59, second=59)
-        query_params['date'] = query_date_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+        # If query_date is in ISO8601 format, use it directly
+        if 'T' in query_date and 'Z' in query_date:
+            query_params['date'] = query_date
+        else:
+            # Convert date string to timestamp format required by historical API
+            query_date_obj = datetime.strptime(query_date, '%Y-%m-%d')
+            query_params['date'] = query_date_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+        
         base_url = f"{API_HISTORICAL_URL}/events/{game_id}/odds"
         if enable_logging:
-            logging.info(f"Using historical odds for date: {query_date}")
+            logging.info(f"Using historical odds for date: {query_params['date']}")
     else:
         base_url = f"{API_BASE_URL}/events/{game_id}/odds"
         if enable_logging:
             logging.info("Using live odds")
     
-    # Construct URL with query parameters
+    # Rest of the function remains unchanged
     query_string = urllib.parse.urlencode(query_params)
     url = f"{base_url}?{query_string}"
     
@@ -561,18 +568,28 @@ def process_all_sog_markets(query_date=None, enable_logging=False):
 
     # Get all games for the date
     games = get_nhl_events_from_db(query_date, enable_logging=enable_logging)
+    
+    # If no games found, try to fetch and store them first
     if not games:
         if enable_logging:
-            logging.warning(f"No games found for date {query_date}")
+            logging.info(f"No games found for date {query_date}, attempting to fetch from API")
+        fetch_and_store_nhl_games(query_date, enable_logging=enable_logging)
+        # Try to get games again after fetching
+        games = get_nhl_events_from_db(query_date, enable_logging=enable_logging)
+        
+    if not games:
+        if enable_logging:
+            logging.warning(f"No games found for date {query_date} even after fetching from API")
         return
 
     # Process markets for each game using its commence_time
     for game in games:
-        # Convert commence_time to YYYY-MM-DD format for the API
-        game_date = game['commence_time'].strftime('%Y-%m-%d')
+        # Convert commence_time to UTC ISO8601 string
+        utc_time = game['commence_time'].astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        
         if enable_logging:
-            logging.info(f"Processing game {game['id']} scheduled for {game_date}")
-        process_sog_markets(game['id'], query_date=game_date, enable_logging=enable_logging)
+            logging.info(f"Processing game {game['id']} scheduled for {utc_time}")
+        process_sog_markets(game['id'], query_date=utc_time, enable_logging=enable_logging)
 
     if enable_logging:
         logging.info(f"Completed processing all SOG markets for date {query_date}") 
