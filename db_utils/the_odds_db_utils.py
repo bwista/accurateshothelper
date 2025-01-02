@@ -15,83 +15,6 @@ API_KEY = '9a5c793d56cca6f031c468dc649e054d'
 API_BASE_URL = 'https://api.the-odds-api.com/v4/sports/icehockey_nhl'
 API_HISTORICAL_URL = 'https://api.the-odds-api.com/v4/historical/sports/icehockey_nhl'
 
-def filter_odds_closest_to_100(odds_dict):
-    """
-    Filters odds to find those closest to +100 in decimal format.
-    For each sportsbook, finds the most recent handicap when Over/Under don't match,
-    and returns both Over and Under for that handicap.
-
-    Args:
-        odds_dict (dict): A dictionary of odds categorized by sportsbook and market_type.
-
-    Returns:
-        list: A list of dictionaries containing the filtered odds.
-    """
-    # First, get the most recent lines for each unique combination
-    most_recent_odds = {}
-    for key, odds_list in odds_dict.items():
-        for odd in odds_list:
-            # Create a unique key for each combination
-            unique_key = (odd['game_id'], odd['sportsbook'], odd['player'], odd['market_type'], odd['handicap'])
-            
-            # Convert timestamp string to datetime for comparison
-            timestamp = datetime.strptime(str(odd['timestamp']), '%Y-%m-%d %H:%M:%S%z')
-            
-            # Update if this is the first occurrence or if it's more recent
-            if unique_key not in most_recent_odds or timestamp > datetime.strptime(str(most_recent_odds[unique_key]['timestamp']), '%Y-%m-%d %H:%M:%S%z'):
-                most_recent_odds[unique_key] = odd
-
-    # Organize by sportsbook and handicap
-    by_sportsbook = {}
-    for odd in most_recent_odds.values():
-        sportsbook = odd['sportsbook']
-        if sportsbook not in by_sportsbook:
-            by_sportsbook[sportsbook] = {'over': {}, 'under': {}}
-        
-        side = 'over' if odd['market_type'].lower().startswith('over') else 'under'
-        handicap = odd['handicap']
-        timestamp = datetime.strptime(str(odd['timestamp']), '%Y-%m-%d %H:%M:%S%z')
-        
-        by_sportsbook[sportsbook][side][handicap] = {
-            'odd': odd,
-            'timestamp': timestamp
-        }
-
-    # Find matching handicaps or most recent ones
-    filtered_odds = []
-    for sportsbook, sides in by_sportsbook.items():
-        over_handicaps = set(sides['over'].keys())
-        under_handicaps = set(sides['under'].keys())
-        
-        # Find matching handicaps
-        matching_handicaps = over_handicaps.intersection(under_handicaps)
-        
-        if matching_handicaps:
-            # Use the first matching handicap
-            handicap = next(iter(matching_handicaps))
-            filtered_odds.append(sides['over'][handicap]['odd'])
-            filtered_odds.append(sides['under'][handicap]['odd'])
-        else:
-            # Find the most recent handicap
-            all_entries = []
-            for handicap, data in sides['over'].items():
-                all_entries.append((handicap, data['timestamp'], 'over'))
-            for handicap, data in sides['under'].items():
-                all_entries.append((handicap, data['timestamp'], 'under'))
-            
-            if all_entries:
-                # Sort by timestamp and get the most recent
-                most_recent = max(all_entries, key=lambda x: x[1])
-                handicap = most_recent[0]
-                
-                # Add both sides for this handicap if they exist
-                if handicap in sides['over']:
-                    filtered_odds.append(sides['over'][handicap]['odd'])
-                if handicap in sides['under']:
-                    filtered_odds.append(sides['under'][handicap]['odd'])
-
-    return filtered_odds
-
 def fetch_and_store_nhl_games(date=None, enable_logging=False):
     """
     Fetch NHL events from the_odds API and store them in the PostgreSQL database.
@@ -230,12 +153,14 @@ def get_nhl_events_from_db(query_date=None, enable_logging=False):
                 logging.error("Failed to establish a database connection.")
             return []
         
+        # Query using date range in local time (-06:00 for Central Time)
         query = """
             SELECT id, sport_key, sport_title, home_team, away_team, commence_time
             FROM game_info
-            WHERE DATE(commence_time) = %s;
+            WHERE commence_time >= %s::date
+            AND commence_time < (%s::date + INTERVAL '1 day');
         """
-        cursor.execute(query, (query_date.strftime('%Y-%m-%d'),))
+        cursor.execute(query, (query_date.strftime('%Y-%m-%d'), query_date.strftime('%Y-%m-%d')))
         rows = cursor.fetchall()
         
         events = []
@@ -263,7 +188,7 @@ def get_nhl_events_from_db(query_date=None, enable_logging=False):
         if cursor:
             cursor.close()
         if conn:
-            conn.close() 
+            conn.close()
 
 def get_player_sog_odds(player_name=None, query_date=None, sportsbook=None, team_name=None, line=False, fuzzy_threshold=85):
     """
@@ -426,6 +351,20 @@ def process_sog_markets(game_id, query_date=None, enable_logging=False):
 
     # Get current timestamp without fractional seconds for scraped_at
     current_time = datetime.now().replace(microsecond=0)
+
+    # Check if game exists in game_info and get its commence_time
+    if query_date:
+        # Extract date part if it's a datetime string with timezone
+        if isinstance(query_date, str) and 'T' in query_date:
+            query_date = query_date.split('T')[0]
+    games = get_nhl_events_from_db(query_date, enable_logging=enable_logging)
+    game_info = next((game for game in games if game['id'] == game_id), None)
+    
+    if game_info:
+        # Convert commence_time to UTC ISO8601 string
+        query_date = game_info['commence_time'].astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        if enable_logging:
+            logging.info(f"Using commence_time from game_info: {query_date}")
 
     # Determine if we should use historical odds
     today = datetime.now().strftime('%Y-%m-%d')
@@ -593,3 +532,155 @@ def process_all_sog_markets(query_date=None, enable_logging=False):
 
     if enable_logging:
         logging.info(f"Completed processing all SOG markets for date {query_date}") 
+
+def get_mismatched_game_ids_with_details(enable_logging=False):
+    """
+    Compare distinct game_ids in game_info and player_sog_odds tables
+    and return game_ids that are not present in both tables, along with
+    additional details for missing games in game_info.
+
+    Args:
+        enable_logging (bool): If True, enables logging. Defaults to False.
+
+    Returns:
+        dict: A dictionary with keys 'only_in_game_info' and 'only_in_player_sog_odds'
+              containing lists of game_ids not present in both tables. 'only_in_game_info'
+              includes additional details like away_team, home_team, and commence_time.
+    """
+    if enable_logging:
+        logging.info("Comparing distinct game_ids in game_info and player_sog_odds tables.")
+    try:
+        # Establish a database connection
+        conn, cursor = get_db_connection('THE_ODDS_DB_')
+        if not conn or not cursor:
+            if enable_logging:
+                logging.error("Failed to establish a database connection.")
+            return {'only_in_game_info': [], 'only_in_player_sog_odds': []}
+
+        # Query distinct game_ids from both tables
+        cursor.execute("SELECT DISTINCT id FROM game_info")
+        game_info_ids = {row[0] for row in cursor.fetchall()}
+
+        cursor.execute("SELECT DISTINCT game_id FROM player_sog_odds")
+        player_sog_odds_ids = {row[0] for row in cursor.fetchall()}
+
+        # Find game_ids not present in both tables
+        only_in_game_info_ids = game_info_ids - player_sog_odds_ids
+        only_in_player_sog_odds = player_sog_odds_ids - game_info_ids
+
+        # Fetch additional details for game_ids only in game_info
+        only_in_game_info = []
+        if only_in_game_info_ids:
+            cursor.execute("""
+                SELECT id, home_team, away_team, commence_time
+                FROM game_info
+                WHERE id = ANY(%s)
+            """, (list(only_in_game_info_ids),))
+            only_in_game_info = cursor.fetchall()
+
+        if enable_logging:
+            logging.info(f"Game IDs only in game_info: {only_in_game_info}")
+            logging.info(f"Game IDs only in player_sog_odds: {only_in_player_sog_odds}")
+
+        if enable_logging:
+            logging.info("Completed comparison of game_ids.")
+            
+        return {
+            'only_in_game_info': [
+                {
+                    'game_id': row[0],
+                    'away_team': row[2],
+                    'home_team': row[1],
+                    'commence_time': row[3].strftime('%Y-%m-%d')
+                }
+                for row in only_in_game_info
+            ],
+            'only_in_player_sog_odds': list(only_in_player_sog_odds)
+        }
+
+    except Exception as e:
+        if enable_logging:
+            logging.error("An error occurred while comparing game_ids: %s", e)
+        return {'only_in_game_info': [], 'only_in_player_sog_odds': []}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+def filter_odds_closest_to_100(odds_dict):
+    """
+    Filters odds to find those closest to +100 in decimal format.
+    For each sportsbook, finds the most recent handicap when Over/Under don't match,
+    and returns both Over and Under for that handicap.
+
+    Args:
+        odds_dict (dict): A dictionary of odds categorized by sportsbook and market_type.
+
+    Returns:
+        list: A list of dictionaries containing the filtered odds.
+    """
+    # First, get the most recent lines for each unique combination
+    most_recent_odds = {}
+    for key, odds_list in odds_dict.items():
+        for odd in odds_list:
+            # Create a unique key for each combination
+            unique_key = (odd['game_id'], odd['sportsbook'], odd['player'], odd['market_type'], odd['handicap'])
+            
+            # Convert timestamp string to datetime for comparison
+            timestamp = datetime.strptime(str(odd['timestamp']), '%Y-%m-%d %H:%M:%S%z')
+            
+            # Update if this is the first occurrence or if it's more recent
+            if unique_key not in most_recent_odds or timestamp > datetime.strptime(str(most_recent_odds[unique_key]['timestamp']), '%Y-%m-%d %H:%M:%S%z'):
+                most_recent_odds[unique_key] = odd
+
+    # Organize by sportsbook and handicap
+    by_sportsbook = {}
+    for odd in most_recent_odds.values():
+        sportsbook = odd['sportsbook']
+        if sportsbook not in by_sportsbook:
+            by_sportsbook[sportsbook] = {'over': {}, 'under': {}}
+        
+        side = 'over' if odd['market_type'].lower().startswith('over') else 'under'
+        handicap = odd['handicap']
+        timestamp = datetime.strptime(str(odd['timestamp']), '%Y-%m-%d %H:%M:%S%z')
+        
+        by_sportsbook[sportsbook][side][handicap] = {
+            'odd': odd,
+            'timestamp': timestamp
+        }
+
+    # Find matching handicaps or most recent ones
+    filtered_odds = []
+    for sportsbook, sides in by_sportsbook.items():
+        over_handicaps = set(sides['over'].keys())
+        under_handicaps = set(sides['under'].keys())
+        
+        # Find matching handicaps
+        matching_handicaps = over_handicaps.intersection(under_handicaps)
+        
+        if matching_handicaps:
+            # Use the first matching handicap
+            handicap = next(iter(matching_handicaps))
+            filtered_odds.append(sides['over'][handicap]['odd'])
+            filtered_odds.append(sides['under'][handicap]['odd'])
+        else:
+            # Find the most recent handicap
+            all_entries = []
+            for handicap, data in sides['over'].items():
+                all_entries.append((handicap, data['timestamp'], 'over'))
+            for handicap, data in sides['under'].items():
+                all_entries.append((handicap, data['timestamp'], 'under'))
+            
+            if all_entries:
+                # Sort by timestamp and get the most recent
+                most_recent = max(all_entries, key=lambda x: x[1])
+                handicap = most_recent[0]
+                
+                # Add both sides for this handicap if they exist
+                if handicap in sides['over']:
+                    filtered_odds.append(sides['over'][handicap]['odd'])
+                if handicap in sides['under']:
+                    filtered_odds.append(sides['under'][handicap]['odd'])
+
+    return filtered_odds
