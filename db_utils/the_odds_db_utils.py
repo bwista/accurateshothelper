@@ -157,10 +157,9 @@ def get_nhl_events_from_db(query_date=None, enable_logging=False):
         query = """
             SELECT id, sport_key, sport_title, home_team, away_team, commence_time
             FROM game_info
-            WHERE commence_time >= %s::date
-            AND commence_time < (%s::date + INTERVAL '1 day');
+            WHERE DATE(commence_time AT TIME ZONE 'America/Chicago') = %s::date;
         """
-        cursor.execute(query, (query_date.strftime('%Y-%m-%d'), query_date.strftime('%Y-%m-%d')))
+        cursor.execute(query, (query_date.strftime('%Y-%m-%d'),))
         rows = cursor.fetchall()
         
         events = []
