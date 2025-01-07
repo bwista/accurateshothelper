@@ -6,6 +6,8 @@ from psycopg2.extras import execute_values
 from .base_utils import get_db_connection
 from utils import get_request
 from fuzzywuzzy import fuzz
+from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,7 +23,7 @@ def fetch_and_store_nhl_games(date=None, enable_logging=False):
     Uses historical API if date is provided, otherwise uses current events API.
 
     Args:
-        date (str, optional): The date to fetch events for in 'YYYY-MM-DD' format. If not provided, uses current events.
+        date (str, optional): The date to fetch events for in 'YYYY-MM-DD' format in CST timezone. If not provided, uses current events.
         enable_logging (bool): If True, enables logging. Defaults to False.
 
     Returns:
@@ -30,26 +32,41 @@ def fetch_and_store_nhl_games(date=None, enable_logging=False):
     if enable_logging:
         logging.info(f"Fetching and storing NHL events for date: {date}")
 
+    # Get current time in CST
+    cst = ZoneInfo("America/Chicago")
+    today_cst = datetime.now(cst).strftime('%Y-%m-%d')
+
     # Determine if we should use historical API
-    today = datetime.now().strftime('%Y-%m-%d')
-    use_historical = date is not None and date != today
+    use_historical = date is not None and date != today_cst
+
+    # Convert input date to datetime objects in CST
+    if date:
+        # Convert CST date to UTC for API
+        start_time = datetime.strptime(date, '%Y-%m-%d').replace(tzinfo=cst)
+        end_time = start_time + timedelta(days=1) - timedelta(seconds=1)
+        
+        # Convert to UTC for API
+        start_time_utc = start_time.astimezone(ZoneInfo("UTC"))
+        end_time_utc = end_time.astimezone(ZoneInfo("UTC"))
 
     # Construct API URL for NHL events
     if use_historical:
-        # Convert date to timestamp format required by historical API
-        date_obj = datetime.strptime(date, '%Y-%m-%d')
-        # Set time to end of day to get the latest data for that date
-        date_obj = date_obj.replace(hour=23, minute=59, second=59)
         query_params = {
             'apiKey': API_KEY,
-            'date': date_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+            'date': end_time_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
         }
         query_string = urllib.parse.urlencode(query_params)
         url = f"{API_HISTORICAL_URL}/events?{query_string}"
         if enable_logging:
             logging.info(f"Using historical API for date: {date}")
     else:
-        url = f"{API_BASE_URL}/events?apiKey={API_KEY}"
+        query_params = {
+            'apiKey': API_KEY,
+            'commenceTimeFrom': start_time_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'commenceTimeTo': end_time_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+        }
+        query_string = urllib.parse.urlencode(query_params)
+        url = f"{API_BASE_URL}/events?{query_string}"
         if enable_logging:
             logging.info("Using current events API")
     
