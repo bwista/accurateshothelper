@@ -28,13 +28,13 @@ def get_matchup_games(start_date, end_date):
     data = r.json()
 
     end_date_dt = datetime.strptime(end_date, '%Y-%m-%d')
-    matchup_games = {'next_start_date': '', 'game_ids': {'id': [], 'date': []}}
+    matchup_games = {'next_start_date': '', 'game_ids': {'id': [], 'date': [], 'game_start_time': []}}
 
     matchup_games['next_start_date'] = data['nextStartDate']
 
     for day in data['gameWeek']:
         for game in day['games']:
-            # game_date_timestamp = game['startTimeUTC']  # Read the game's start time
+            game_start_time = game['startTimeUTC']  # Read the game's start time
             # game_date = datetime.strptime(game_date_timestamp, '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d')
             game_date = day['date']
             # Strip the time and retain only the date this causes problems for the sweden games
@@ -42,6 +42,7 @@ def get_matchup_games(start_date, end_date):
             if datetime.strptime(game_date, '%Y-%m-%d').date() <= end_date_dt.date():
                 matchup_games['game_ids']['id'].append(game['id'])
                 matchup_games['game_ids']['date'].append(game_date)
+                matchup_games['game_ids']['game_start_time'].append(game_start_time)
 
     return matchup_games
 
