@@ -368,19 +368,17 @@ def process_sog_markets(game_id, query_date=None, enable_logging=False):
     # Get current timestamp without fractional seconds for scraped_at
     current_time = datetime.now().replace(microsecond=0)
 
-    # Check if game exists in game_info and get its commence_time
-    if query_date:
-        # Extract date part if it's a datetime string with timezone
-        if isinstance(query_date, str) and 'T' in query_date:
-            query_date = query_date.split('T')[0]
-    games = get_nhl_events_from_db(query_date, enable_logging=enable_logging)
-    game_info = next((game for game in games if game['id'] == game_id), None)
-    
-    if game_info:
-        # Convert commence_time to UTC ISO8601 string
-        query_date = game_info['commence_time'].astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        if enable_logging:
-            logging.info(f"Using commence_time from game_info: {query_date}")
+    # Only fetch game info if query_date is in YYYY-MM-DD format
+    if query_date and isinstance(query_date, str):
+        # If query_date is not in ISO8601 format (no 'T' and 'Z'), fetch game info
+        if 'T' not in query_date and 'Z' not in query_date:
+            games = get_nhl_events_from_db(query_date, enable_logging=enable_logging)
+            game_info = next((game for game in games if game['id'] == game_id), None)
+            if game_info:
+                # Convert commence_time to UTC ISO8601 string
+                query_date = game_info['commence_time'].astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                if enable_logging:
+                    logging.info(f"Using commence_time from game_info: {query_date}")
 
     # Determine if we should use historical odds
     today = datetime.now().strftime('%Y-%m-%d')
