@@ -16,13 +16,15 @@ def get_matchup_games(start_date, end_date):
     Returns:
         dict: A dictionary containing:
             - next_start_date (str): The next available date after the requested range
-            - game_ids (dict): Dictionary with two lists:
+            - game_ids (dict): Dictionary with three lists:
                 - id: List of game IDs
                 - date: List of corresponding game dates
+                - game_start_time: List of game start times
 
     Note:
         The function fetches one week of games starting from start_date and filters
         games up to end_date. For multi-week ranges, use retrieve_schedule().
+        Games with gameScheduleState 'PPD' (postponed) are filtered out.
     """
     r = requests.get(url=API_URL + '/schedule/' + str(start_date))
     data = r.json()
@@ -34,6 +36,10 @@ def get_matchup_games(start_date, end_date):
 
     for day in data['gameWeek']:
         for game in day['games']:
+            # Skip postponed games
+            if game.get('gameScheduleState') == 'PPD':
+                continue
+                
             game_start_time = game['startTimeUTC']  # Read the game's start time
             # game_date = datetime.strptime(game_date_timestamp, '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d')
             game_date = day['date']
