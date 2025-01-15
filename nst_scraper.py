@@ -137,9 +137,9 @@ def nst_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=N
                 df = df.drop(columns=['Unnamed: 0'])
             df.columns = df.columns.str.lower().str.replace(' ', '_')
             
-            # Convert team names using nst_to_nhl_tricode
+            # Convert team names using nst_to_nhl_tricode, split by comma and apply to each team
             if 'team' in df.columns:
-                df['team'] = df['team'].apply(nst_to_nhl_tricode)
+                df['team'] = df['team'].apply(lambda x: ', '.join(nst_to_nhl_tricode(team.strip()) or team.strip() for team in str(x).split(',')))
             
             # Format TOI and TOI/GP columns
             toi_columns = [col for col in df.columns if 'toi' in col.lower()]
