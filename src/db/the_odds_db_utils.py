@@ -8,6 +8,7 @@ from src.data_processing.utils import get_request
 from fuzzywuzzy import fuzz
 from datetime import timedelta
 from zoneinfo import ZoneInfo
+from src.data_processing.team_utils import get_fullname_by_tricode
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -890,3 +891,116 @@ def filter_odds_closest_to_100(odds_dict):
                     filtered_odds.append(sides['under'][handicap]['odd'])
 
     return filtered_odds
+
+def get_team_moneyline_odds(team_abbreviation=None, query_date=None, sportsbook=None):
+    """
+    Retrieve team moneyline odds from the PostgreSQL the_odds database.
+
+    Args:
+        team_abbreviation (str, optional): The three-letter team abbreviation (e.g., 'TOR', 'NYR').
+        query_date (str, optional): The date to query in 'YYYY-MM-DD' format. Used to retrieve games.
+        sportsbook (str, optional): The name of the sportsbook to filter odds by.
+
+    Returns:
+        list: A list of dictionaries containing team moneyline odds.
+    """
+    logging.info(f"Retrieving moneyline odds for team: {team_abbreviation}, date: {query_date}, sportsbook: {sportsbook}")
+
+    # Validate that at least one filter is provided
+    if not team_abbreviation and not sportsbook:
+        print("At least one of team_abbreviation or sportsbook must be provided.")
+        return []
+
+    # Convert team abbreviation to full name if provided
+    team_name = None
+    if team_abbreviation:
+        team_name = get_fullname_by_tricode(team_abbreviation)
+        if not team_name:
+            print(f"Invalid team abbreviation: {team_abbreviation}")
+            return []
+
+    # Retrieve games from the database for the given date
+    games = get_nhl_events_from_db(query_date, enable_logging=True)
+
+    if not games:
+        print(f"No games found in the game_info table for date {query_date}.")
+        return []
+
+    # Filter games to find the game_id involving the specified team
+    game_ids = []
+    for game in games:
+        if team_name in (game['away_team'], game['home_team']):
+            game_ids.append(game['id'])  # Note: using 'id' instead of 'game_id' to match the_odds schema
+
+    if not game_ids:
+        print(f"No games found for team {team_name} on {query_date}.")
+        return []
+
+    try:
+        # Establish a database connection
+        conn, cursor = get_db_connection('THE_ODDS_DB_')
+        if not conn or not cursor:
+            print("Database connection failed.")
+            return []
+
+        # Initialize the base query
+        base_query = """
+            SELECT 
+                mo.game_id,
+                mo.sportsbook,
+                mo.team_name,
+                mo.price,
+                mo.last_update
+            FROM moneyline_odds mo
+            WHERE mo.game_id = ANY(%s)
+        """
+
+        # Initialize parameters list with the game_ids
+        params = [game_ids]
+
+        # Add filters based on provided arguments
+        if team_name:
+            base_query += " AND mo.team_name = %s"
+            params.append(team_name)
+        
+        if sportsbook:
+            base_query += " AND mo.sportsbook ILIKE %s"
+            params.append(sportsbook)
+
+        cursor.execute(base_query, tuple(params))
+        rows = cursor.fetchall()
+
+        # Process the retrieved rows
+        odds_list = []
+        for row in rows:
+            odds = {
+                'game_id': row[0],
+                'sportsbook': row[1],
+                'team': row[2],
+                'price': int(row[3]),  # Convert to int to preserve American odds format
+                'timestamp': row[4]
+            }
+            odds_list.append(odds)
+
+        if not odds_list:
+            filters = []
+            if team_name:
+                filters.append(f"team '{team_name}'")
+            if sportsbook:
+                filters.append(f"sportsbook '{sportsbook}'")
+            filter_str = " and ".join(filters)
+            print(f"No odds found in moneyline_odds table for game_ids {game_ids} with filters: {filter_str}")
+            return []
+
+        logging.info("Completed retrieving moneyline odds.")
+        return odds_list
+
+    except Exception as e:
+        print("An error occurred:", e)
+        return []
+    finally:
+        # Ensure the cursor and connection are closed
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
