@@ -510,6 +510,157 @@ def process_sog_markets(game_id, query_date=None, enable_logging=False):
     if enable_logging:
         logging.info(f"Completed processing SOG markets for game {game_id}")
 
+def process_moneyline_markets(game_id, query_date=None, enable_logging=False):
+    """
+    Fetches and processes moneyline (h2h) markets from the_odds API for a specific game.
+    Uses historical odds if query_date is not today.
+    
+    Args:
+        game_id (str): The game ID to fetch markets for.
+        query_date (datetime or str, optional): The datetime in UTC for historical odds, or date string in 'YYYY-MM-DD' format.
+                                              If not provided or is today, uses live odds.
+        enable_logging (bool): If True, enables logging. Defaults to False.
+    """
+    if enable_logging:
+        logging.info(f"Processing moneyline markets for game: {game_id}")
+
+    # Get current timestamp without fractional seconds for scraped_at
+    current_time = datetime.now().replace(microsecond=0)
+
+    # Only fetch game info if query_date is in YYYY-MM-DD format
+    if query_date and isinstance(query_date, str):
+        # If query_date is not in ISO8601 format (no 'T' and 'Z'), fetch game info
+        if 'T' not in query_date and 'Z' not in query_date:
+            games = get_nhl_events_from_db(query_date, enable_logging=enable_logging)
+            game_info = next((game for game in games if game['id'] == game_id), None)
+            if game_info:
+                # Convert commence_time to UTC ISO8601 string
+                query_date = game_info['commence_time'].astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                if enable_logging:
+                    logging.info(f"Using commence_time from game_info: {query_date}")
+
+    # Determine if we should use historical odds
+    today = datetime.now().strftime('%Y-%m-%d')
+    use_historical = query_date is not None and (
+        isinstance(query_date, datetime) or 
+        (isinstance(query_date, str) and query_date != today)
+    )
+
+    # Construct API URL for moneyline markets
+    query_params = {
+        'apiKey': API_KEY,
+        'regions': 'us',
+        'markets': 'h2h',
+        'oddsFormat': 'american'
+    }
+
+    # Add date parameter for historical odds
+    if use_historical:
+        # If query_date is in ISO8601 format, use it directly
+        if 'T' in query_date and 'Z' in query_date:
+            query_params['date'] = query_date
+        else:
+            # Convert date string to timestamp format required by historical API
+            query_date_obj = datetime.strptime(query_date, '%Y-%m-%d')
+            query_params['date'] = query_date_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+        
+        base_url = f"{API_HISTORICAL_URL}/events/{game_id}/odds"
+        if enable_logging:
+            logging.info(f"Using historical odds for date: {query_params['date']}")
+    else:
+        base_url = f"{API_BASE_URL}/events/{game_id}/odds"
+        if enable_logging:
+            logging.info("Using live odds")
+    
+    # Rest of the function remains unchanged
+    query_string = urllib.parse.urlencode(query_params)
+    url = f"{base_url}?{query_string}"
+    
+    # Get the markets data from the API
+    response_data = get_request(url)
+    
+    # For historical odds, the actual odds data is nested in the 'data' field
+    markets_data = response_data.get('data', response_data) if use_historical else response_data
+
+    if not markets_data or 'bookmakers' not in markets_data:
+        if enable_logging:
+            logging.warning(f"No market data found for game {game_id}")
+        return
+
+    # Establish a database connection
+    conn, cursor = get_db_connection('THE_ODDS_DB_')
+    if not conn or not cursor:
+        if enable_logging:
+            logging.error("Failed to establish a database connection.")
+        return
+
+    try:
+        # Define the insert query
+        insert_query = """
+            INSERT INTO moneyline_odds (
+                game_id,
+                sportsbook,
+                team_name,
+                price,
+                last_update,
+                scraped_at
+            )
+            VALUES %s
+            ON CONFLICT (game_id, sportsbook, team_name) 
+            DO UPDATE SET
+                price = EXCLUDED.price,
+                last_update = EXCLUDED.last_update,
+                scraped_at = CURRENT_TIMESTAMP(0);
+        """
+
+        # Process bookmakers and their markets
+        records_to_insert = []
+        for bookmaker in markets_data['bookmakers']:
+            sportsbook = bookmaker['key']
+            last_update = bookmaker['last_update']  # Get bookmaker's last_update
+
+            for market in bookmaker['markets']:
+                if market['key'] != 'h2h':
+                    continue
+
+                for outcome in market['outcomes']:
+                    team_name = outcome['name']  # Team name
+                    price = int(outcome['price'])  # American odds format
+
+                    record = (
+                        game_id,
+                        sportsbook,
+                        team_name,
+                        price,
+                        last_update,
+                        current_time  # Add scraped_at timestamp
+                    )
+                    records_to_insert.append(record)
+
+        if records_to_insert:
+            # Use execute_values for efficient bulk insertion
+            execute_values(cursor, insert_query, records_to_insert)
+            conn.commit()
+            if enable_logging:
+                logging.info(f"Inserted/Updated {len(records_to_insert)} records for game {game_id}")
+        else:
+            if enable_logging:
+                logging.warning(f"No records to insert for game {game_id}")
+
+    except Exception as e:
+        if enable_logging:
+            logging.error(f"An error occurred while processing game {game_id}: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    if enable_logging:
+        logging.info(f"Completed processing moneyline markets for game {game_id}")
+
 def process_all_sog_markets(query_date=None, enable_logging=False):
     """
     Process SOG markets for all games on a given date.
@@ -548,6 +699,45 @@ def process_all_sog_markets(query_date=None, enable_logging=False):
 
     if enable_logging:
         logging.info(f"Completed processing all SOG markets for date {query_date}") 
+
+def process_all_moneyline_markets(query_date=None, enable_logging=False):
+    """
+    Process moneyline markets for all games on a given date.
+    
+    Args:
+        query_date (str, optional): The date to process in 'YYYY-MM-DD' format. Defaults to today.
+        enable_logging (bool): If True, enables logging. Defaults to False.
+    """
+    if enable_logging:
+        logging.info(f"Processing all moneyline markets for date: {query_date}")
+
+    # Get all games for the date
+    games = get_nhl_events_from_db(query_date, enable_logging=enable_logging)
+    
+    # If no games found, try to fetch and store them first
+    if not games:
+        if enable_logging:
+            logging.info(f"No games found for date {query_date}, attempting to fetch from API")
+        fetch_and_store_nhl_games(query_date, enable_logging=enable_logging)
+        # Try to get games again after fetching
+        games = get_nhl_events_from_db(query_date, enable_logging=enable_logging)
+        
+    if not games:
+        if enable_logging:
+            logging.warning(f"No games found for date {query_date} even after fetching from API")
+        return
+
+    # Process markets for each game using its commence_time
+    for game in games:
+        # Convert commence_time to UTC ISO8601 string
+        utc_time = game['commence_time'].astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        
+        if enable_logging:
+            logging.info(f"Processing game {game['id']} scheduled for {utc_time}")
+        process_moneyline_markets(game['id'], query_date=utc_time, enable_logging=enable_logging)
+
+    if enable_logging:
+        logging.info(f"Completed processing all moneyline markets for date {query_date}")
 
 def get_mismatched_game_ids_with_details(enable_logging=False):
     """

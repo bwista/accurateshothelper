@@ -59,27 +59,34 @@ Accurate Shot Helper is a comprehensive Python-based tool designed to process, a
 
 ## Usage
 
+Open either the xgm_model or x_shots_model notebooks to run the models. The notebook will load player info data from the database and check when it was last updated. If it is older than 1 day, the notebook will scrape the latest data from the NHL API and update the database. This information is used to link data between Natural Stat Trick and The Odds API.
+
+The transformed data is output from predict_lineup_xgoalsRetrieves and processes a team's most recent game data to create a Lineup object containing skaters and goalies from the boxscore.
+
 ### Notebooks
 
 The project includes several Jupyter notebooks for different analyses:
 
+
+- `notebooks/xgm_model_01.ipynb` - Expected goals model win probabilities 
 - `notebooks/x_shots_model_03.ipynb` - Latest shots model and analysis
 - `notebooks/nst_scraper.ipynb` - Data scraping implementation
 - `notebooks/ixg60_calc.ipynb` - Expected goals calculations
-- `notebooks/xgm_model_01.ipynb` - Expected goals model
 - `notebooks/sog_corr_calc.ipynb` - Shots on goal correlation analysis
 
 ### Core Modules
 
 - `src/data_processing/` - Data processing utilities and functions
   - `nst_scraper.py` - Natural Stat Trick scraping functionality
-  - `team_utils.py` - Team-related data processing
-  - `game_utils.py` - Game data processing
+  - `team_utils.py` - Team-related data processing via NHL API
+  - `game_utils.py` - Game data processing via NHL API
   - `wager_utils.py` - Wager analysis utilities
 
 - `src/db/` - Database interaction modules
   - `nhl_db_utils.py` - NHL database utilities
   - `the_odds_db_utils.py` - Odds database interactions
+  - `db_utils.py` - Database utilities shared between the two databases
+  - `prop_odds_db_utils.py` - Prop odds (service no longer used)database interactions
 
 - `src/entities/` - Core entity definitions
   - `lineup.py` - Team lineup management
