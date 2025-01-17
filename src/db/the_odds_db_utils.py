@@ -13,7 +13,9 @@ from zoneinfo import ZoneInfo
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # API Configuration
-API_KEY = '9a5c793d56cca6f031c468dc649e054d'
+API_KEY = os.getenv('THE_ODDS_API_KEY')
+if not API_KEY:
+    raise ValueError("THE_ODDS_API_KEY environment variable is not set")
 API_BASE_URL = 'https://api.the-odds-api.com/v4/sports/icehockey_nhl'
 API_HISTORICAL_URL = 'https://api.the-odds-api.com/v4/historical/sports/icehockey_nhl'
 
