@@ -44,8 +44,10 @@ Accurate Shot Helper is a comprehensive Python-based tool designed to process, a
    ```bash
    pip install -r requirements.txt
    ```
-
-4. **Set Up Environment Variables**
+3. **Create the Necessary PostgreSQL Databases
+   A 'nhl_players_db' and 'the_odds' databases will be required to run the code. Create these databases before running the notebooks.
+     
+5. **Set Up Environment Variables**
 
    Create a `.env` file in the root directory and add your database configurations:
 
@@ -68,9 +70,9 @@ The transformed data is output from predict_lineup_xgoalsRetrieves and processes
 The project includes several Jupyter notebooks for different analyses:
 
 
-- `notebooks/xgm_model_01.ipynb` - Expected goals model win probabilities 
+- `notebooks/xgm_model_02.ipynb` - Expected goals model win probabilities 
 - `notebooks/x_shots_model_03.ipynb` - Latest shots model and analysis
-- `notebooks/nst_scraper.ipynb` - Data scraping implementation
+- `notebooks/nst_scraper.ipynb` - Naturalstattrick data scraping implementation
 - `notebooks/ixg60_calc.ipynb` - Expected goals calculations
 - `notebooks/sog_corr_calc.ipynb` - Shots on goal correlation analysis
 
