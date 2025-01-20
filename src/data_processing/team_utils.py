@@ -4,6 +4,8 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 
+from src.data_processing.season_utils import get_season_for_date, get_season_end_date
+
 API_URL = 'https://api-web.nhle.com/'
 
 def get_team_info():
@@ -163,6 +165,8 @@ def get_week_schedule(team: str, date: str) -> dict:
 def get_most_recent_game_id(team: str, date: str) -> Optional[int]:
     """
     Finds the most recent past game_id based on the game_date from the weekly schedule.
+    If no games are found in the current season, looks back to the previous season.
+    Excludes preseason games by checking the game ID format.
 
     Args:
         team (str): Three-letter team code (e.g., 'TOR').
@@ -184,14 +188,37 @@ def get_most_recent_game_id(team: str, date: str) -> Optional[int]:
     # Call get_week_schedule with the offset date
     schedule = get_week_schedule(team, date_plus_offset_str)
 
-    # Filter games that have a gameDate before the reference_date
+    # Filter games that have a gameDate before the reference_date and exclude preseason games
     past_games = [
         game for game in schedule.get('games', [])
         if datetime.strptime(game.get('gameDate'), '%Y-%m-%d').date() < ref_date
+        and str(game.get('id'))[4:6] != '01'  # Exclude games where digits 5-6 are '01' (preseason)
     ]
 
     if not past_games:
-        return None
+        # If no past games found, look back to the previous season
+        try:
+            current_season = get_season_for_date(date)
+            prev_season = current_season - 10001  # e.g., 20242025 -> 20232024
+            prev_season_end = get_season_end_date(prev_season, stype=2)  # stype=2 for regular season
+
+            prev_season_end_plus_offset = datetime.strptime(prev_season_end, '%Y-%m-%d').date() - timedelta(days=5)
+            prev_season_end_plus_offset_str = prev_season_end_plus_offset.strftime('%Y-%m-%d')
+            
+            # Try to get the schedule for the end of previous season
+            schedule = get_week_schedule(team, prev_season_end_plus_offset_str )
+            
+            # Get all games from the schedule, excluding preseason games
+            past_games = [
+                game for game in schedule.get('games', [])
+                if str(game.get('id'))[4:6] != '01'  # Exclude preseason games
+            ]
+            
+            if not past_games:
+                return None
+                
+        except (ValueError, KeyError):
+            return None
 
     # Find the game with the latest gameDate
     most_recent_game = max(
