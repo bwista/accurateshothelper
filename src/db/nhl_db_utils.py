@@ -536,3 +536,82 @@ def get_player_id(full_name: str, db_prefix: dict) -> Optional[List[int]]:
     except Exception as e:
         logger.error(f"An unexpected error occurred while retrieving player_id(s): {e}")
         return None
+
+def insert_player_data(player_info: dict, db_prefix: str) -> bool:
+    """
+    Inserts or updates player data in the players table.
+
+    Args:
+        player_info (dict): Dictionary containing player information.
+        db_prefix (str): The prefix for the database environment variables.
+
+    Returns:
+        bool: True if successful, False otherwise.
+    """
+    try:
+        with get_db_connection(db_prefix) as conn:
+            cursor = conn.cursor()
+
+            # Define the SQL INSERT statement with upsert capability
+            insert_query = """
+            INSERT INTO players (
+                player_id,
+                first_name,
+                last_name,
+                full_name,
+                position,
+                jersey_number,
+                date_of_birth,
+                nationality,
+                height,
+                weight,
+                shoots,
+                current_team_id,
+                current_team_name,
+                current_team_abbreviation,
+                is_active
+            ) VALUES (
+                %(player_id)s,
+                %(first_name)s,
+                %(last_name)s,
+                %(full_name)s,
+                %(position)s,
+                %(jersey_number)s,
+                %(date_of_birth)s,
+                %(nationality)s,
+                %(height)s,
+                %(weight)s,
+                %(shoots)s,
+                %(current_team_id)s,
+                %(current_team_name)s,
+                %(current_team_abbreviation)s,
+                %(is_active)s
+            )
+            ON CONFLICT (player_id) DO UPDATE SET
+                first_name = EXCLUDED.first_name,
+                last_name = EXCLUDED.last_name,
+                full_name = EXCLUDED.full_name,
+                position = EXCLUDED.position,
+                jersey_number = EXCLUDED.jersey_number,
+                date_of_birth = EXCLUDED.date_of_birth,
+                nationality = EXCLUDED.nationality,
+                height = EXCLUDED.height,
+                weight = EXCLUDED.weight,
+                shoots = EXCLUDED.shoots,
+                current_team_id = EXCLUDED.current_team_id,
+                current_team_name = EXCLUDED.current_team_name,
+                current_team_abbreviation = EXCLUDED.current_team_abbreviation,
+                is_active = EXCLUDED.is_active,
+                last_updated = CURRENT_TIMESTAMP;
+            """
+
+            # Execute the INSERT statement
+            cursor.execute(insert_query, player_info)
+            conn.commit()
+
+            logger.info(f"Player {player_info['full_name']} inserted/updated successfully.")
+            return True
+
+    except Exception as e:
+        logger.error(f"An error occurred while inserting player data: {e}")
+        return False

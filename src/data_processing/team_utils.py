@@ -21,7 +21,6 @@ def get_team_info():
             - triCode (str): The three letter abbreviation code for the team
     """
     nhl_teams = {}
-    # https://api.nhle.com/stats/rest/en/team
     response = requests.get(f"{API_URL}/stats/rest/en/team", params={"Content-Type": "application/json"})
     data = response.json()
 
@@ -166,6 +165,7 @@ def get_most_recent_game_id(team: str, date: str) -> Optional[int]:
     """
     Finds the most recent past game_id based on the game_date from the weekly schedule.
     If no games are found in the current season, looks back to the previous season.
+    For UTA (Utah), looks up ARI (Arizona) games from previous season since Utah is the relocated Arizona team.
     Excludes preseason games by checking the game ID format.
 
     Args:
@@ -205,8 +205,12 @@ def get_most_recent_game_id(team: str, date: str) -> Optional[int]:
             prev_season_end_plus_offset = datetime.strptime(prev_season_end, '%Y-%m-%d').date() - timedelta(days=5)
             prev_season_end_plus_offset_str = prev_season_end_plus_offset.strftime('%Y-%m-%d')
             
+            # For UTA (Utah), look up ARI (Arizona) games from previous season
+            # TODO: add season logic so this lookup only occurs when the current season is 20242025
+            lookup_team = 'ARI' if team.upper() == 'UTA' else team
+            
             # Try to get the schedule for the end of previous season
-            schedule = get_week_schedule(team, prev_season_end_plus_offset_str )
+            schedule = get_week_schedule(lookup_team, prev_season_end_plus_offset_str)
             
             # Get all games from the schedule, excluding preseason games
             past_games = [
