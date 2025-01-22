@@ -161,9 +161,9 @@ def get_week_schedule(team: str, date: str) -> dict:
     response.raise_for_status()
     return response.json()
 
-def get_most_recent_game_id(team: str, date: str) -> Optional[int]:
+def get_most_recent_game_id(team: str, date: str) -> tuple[Optional[int], int]:
     """
-    Finds the most recent past game_id based on the game_date from the weekly schedule.
+    Finds the most recent past game_id based on the game_date from the weekly schedule and determines if it's a back-to-back game.
     If no games are found in the current season, looks back to the previous season.
     For UTA (Utah), looks up ARI (Arizona) games from previous season since Utah is the relocated Arizona team.
     Excludes preseason games by checking the game ID format.
@@ -173,7 +173,9 @@ def get_most_recent_game_id(team: str, date: str) -> Optional[int]:
         date (str): The date to retrieve the weekly schedule for in 'YYYY-MM-DD' format.
 
     Returns:
-        Optional[int]: The game_id of the most recent past game. Returns None if no past games are found.
+        tuple[Optional[int], int]: A tuple containing:
+            - The game_id of the most recent past game (None if no past games are found)
+            - Back-to-back indicator (1 if back-to-back, 0 if not)
     """
     try:
         # Parse the original date string to a date object
@@ -219,10 +221,10 @@ def get_most_recent_game_id(team: str, date: str) -> Optional[int]:
             ]
             
             if not past_games:
-                return None
+                return None, 0
                 
         except (ValueError, KeyError):
-            return None
+            return None, 0
 
     # Find the game with the latest gameDate
     most_recent_game = max(
@@ -230,4 +232,9 @@ def get_most_recent_game_id(team: str, date: str) -> Optional[int]:
         key=lambda x: datetime.strptime(x.get('gameDate'), '%Y-%m-%d').date()
     )
 
-    return most_recent_game.get('id')
+    # Calculate if it's a back-to-back game
+    most_recent_game_date = datetime.strptime(most_recent_game.get('gameDate'), '%Y-%m-%d').date()
+    days_difference = (ref_date - most_recent_game_date).days
+    is_back_to_back = 1 if days_difference == 1 else 0
+
+    return most_recent_game.get('id'), is_back_to_back
