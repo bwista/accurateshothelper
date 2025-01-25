@@ -106,6 +106,7 @@ class Lineup:
         forwards (List[Optional[Player]]): List of forward positions (default: 12 slots)
         defense (List[Optional[Player]]): List of defense positions (default: 6 slots)
         goalies (List[Optional[Player]]): List of goalie positions (default: 2 slots)
+        back_to_back (Optional[bool]): Indicates if this lineup is being used in a back-to-back game situation
     
     Class Constants:
         ALLOWED_FORWARD_CATEGORIES (Set[str]): Valid categories for forward positions
@@ -122,6 +123,7 @@ class Lineup:
     forwards: List[Optional[Player]] = field(default_factory=lambda: [None] * 12)
     defense: List[Optional[Player]] = field(default_factory=lambda: [None] * 6)
     goalies: List[Optional[Player]] = field(default_factory=lambda: [None] * 2)
+    back_to_back: Optional[bool] = None
     
     ALLOWED_FORWARD_CATEGORIES = {'F'}
     ALLOWED_DEFENSE_CATEGORY = 'D'
