@@ -20,6 +20,54 @@ if not API_KEY:
 API_BASE_URL = 'https://api.the-odds-api.com/v4/sports/icehockey_nhl'
 API_HISTORICAL_URL = 'https://api.the-odds-api.com/v4/historical/sports/icehockey_nhl'
 
+def convert_to_utc_iso8601(time_value, default_timezone=None, enable_logging=False):
+    """
+    Convert various time formats to UTC ISO8601 string format.
+    
+    Args:
+        time_value (Union[str, datetime, None]): The time value to convert. Can be:
+            - ISO8601 string ('YYYY-MM-DDTHH:MM:SSZ')
+            - Date string ('YYYY-MM-DD')
+            - datetime object
+            - None
+        default_timezone (tzinfo, optional): Default timezone to use if the input is a naive datetime or date string.
+            Defaults to None, which will use UTC.
+        enable_logging (bool): If True, enables logging. Defaults to False.
+    
+    Returns:
+        str: UTC ISO8601 formatted string ('YYYY-MM-DDTHH:MM:SSZ') or None if conversion fails
+    """
+    if time_value is None:
+        return None
+
+    try:
+        if isinstance(time_value, datetime):
+            # If datetime has no timezone, attach the default timezone
+            if time_value.tzinfo is None:
+                time_value = time_value.replace(tzinfo=default_timezone or timezone.utc)
+            return time_value.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        
+        elif isinstance(time_value, str):
+            # Check if already in ISO8601 format
+            if 'T' in time_value and 'Z' in time_value:
+                # Validate the format by parsing and reformatting
+                dt = datetime.strptime(time_value, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+                return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+            else:
+                # Assume it's a date string and attach the default timezone
+                dt = datetime.strptime(time_value, '%Y-%m-%d').replace(tzinfo=default_timezone or timezone.utc)
+                return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        
+        else:
+            if enable_logging:
+                logging.error(f"Unsupported time_value type: {type(time_value)}")
+            return None
+
+    except ValueError as e:
+        if enable_logging:
+            logging.error(f"Failed to convert time value '{time_value}': {str(e)}")
+        return None
+
 def fetch_and_store_nhl_games(date=None, enable_logging=False):
     """
     Fetch NHL events from the_odds API and store them in the PostgreSQL database.
@@ -44,13 +92,14 @@ def fetch_and_store_nhl_games(date=None, enable_logging=False):
 
     # Convert input date to datetime objects in CST
     if date:
-        # Convert CST date to UTC for API
-        start_time = datetime.strptime(date, '%Y-%m-%d').replace(tzinfo=cst)
-        end_time = start_time + timedelta(days=1) - timedelta(seconds=1)
+        # Convert date to UTC ISO8601 with CST as default timezone
+        end_time_str = convert_to_utc_iso8601(date, default_timezone=cst, enable_logging=enable_logging)
+        if not end_time_str:
+            return None
         
-        # Convert to UTC for API
-        start_time_utc = start_time.astimezone(ZoneInfo("UTC"))
-        end_time_utc = end_time.astimezone(ZoneInfo("UTC"))
+        # Parse the UTC time string back to datetime for API parameters
+        end_time_utc = datetime.strptime(end_time_str, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+        start_time_utc = end_time_utc - timedelta(days=1)
 
     # Construct API URL for NHL events
     if use_historical:
@@ -691,15 +740,18 @@ def process_all_sog_markets(query_date=None, enable_logging=False):
 
     # Process markets for each game using its commence_time
     for game in games:
-        # Convert commence_time to UTC ISO8601 string
-        utc_time = game['commence_time'].astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        utc_time = convert_to_utc_iso8601(game['commence_time'], enable_logging=enable_logging)
+        if not utc_time:
+            if enable_logging:
+                logging.error(f"Invalid commence_time format for game {game['id']}")
+            continue
         
         if enable_logging:
             logging.info(f"Processing game {game['id']} scheduled for {utc_time}")
         process_sog_markets(game['id'], query_date=utc_time, enable_logging=enable_logging)
 
     if enable_logging:
-        logging.info(f"Completed processing all SOG markets for date {query_date}") 
+        logging.info(f"Completed processing all SOG markets for date {query_date}")
 
 def process_all_moneyline_markets(query_date=None, enable_logging=False):
     """
@@ -730,8 +782,11 @@ def process_all_moneyline_markets(query_date=None, enable_logging=False):
 
     # Process markets for each game using its commence_time
     for game in games:
-        # Convert commence_time to UTC ISO8601 string
-        utc_time = game['commence_time'].astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        utc_time = convert_to_utc_iso8601(game['commence_time'], enable_logging=enable_logging)
+        if not utc_time:
+            if enable_logging:
+                logging.error(f"Invalid commence_time format for game {game['id']}")
+            continue
         
         if enable_logging:
             logging.info(f"Processing game {game['id']} scheduled for {utc_time}")
@@ -740,40 +795,52 @@ def process_all_moneyline_markets(query_date=None, enable_logging=False):
     if enable_logging:
         logging.info(f"Completed processing all moneyline markets for date {query_date}")
 
-def get_mismatched_game_ids_with_details(enable_logging=False):
+def get_mismatched_game_ids_with_details(table_name='player_sog_odds', enable_logging=False):
     """
-    Compare distinct game_ids in game_info and player_sog_odds tables
+    Compare distinct game_ids in game_info and a specified odds table
     and return game_ids that are not present in both tables, along with
     additional details for missing games in game_info.
 
     Args:
+        table_name (str): The name of the odds table to compare with game_info.
+                         Must be either 'player_sog_odds' or 'moneyline_odds'.
         enable_logging (bool): If True, enables logging. Defaults to False.
 
     Returns:
-        dict: A dictionary with keys 'only_in_game_info' and 'only_in_player_sog_odds'
+        dict: A dictionary with keys 'only_in_game_info' and 'only_in_odds_table'
               containing lists of game_ids not present in both tables. 'only_in_game_info'
               includes additional details like away_team, home_team, and commence_time.
     """
     if enable_logging:
-        logging.info("Comparing distinct game_ids in game_info and player_sog_odds tables.")
+        logging.info(f"Comparing distinct game_ids in game_info and {table_name} tables.")
+
+    # Validate table name
+    valid_tables = {'player_sog_odds', 'moneyline_odds'}
+    if table_name not in valid_tables:
+        error_msg = f"Invalid table name. Must be one of: {', '.join(valid_tables)}"
+        if enable_logging:
+            logging.error(error_msg)
+        raise ValueError(error_msg)
+
     try:
         # Establish a database connection
         conn, cursor = get_db_connection('THE_ODDS_DB_')
         if not conn or not cursor:
             if enable_logging:
                 logging.error("Failed to establish a database connection.")
-            return {'only_in_game_info': [], 'only_in_player_sog_odds': []}
+            return {'only_in_game_info': [], 'only_in_odds_table': []}
 
         # Query distinct game_ids from both tables
         cursor.execute("SELECT DISTINCT id FROM game_info")
         game_info_ids = {row[0] for row in cursor.fetchall()}
 
-        cursor.execute("SELECT DISTINCT game_id FROM player_sog_odds")
-        player_sog_odds_ids = {row[0] for row in cursor.fetchall()}
+        # Use dynamic table name in the query
+        cursor.execute(f"SELECT DISTINCT game_id FROM {table_name}")
+        odds_table_ids = {row[0] for row in cursor.fetchall()}
 
         # Find game_ids not present in both tables
-        only_in_game_info_ids = game_info_ids - player_sog_odds_ids
-        only_in_player_sog_odds = player_sog_odds_ids - game_info_ids
+        only_in_game_info_ids = game_info_ids - odds_table_ids
+        only_in_odds_table = odds_table_ids - game_info_ids
 
         # Fetch additional details for game_ids only in game_info
         only_in_game_info = []
@@ -787,9 +854,7 @@ def get_mismatched_game_ids_with_details(enable_logging=False):
 
         if enable_logging:
             logging.info(f"Game IDs only in game_info: {only_in_game_info}")
-            logging.info(f"Game IDs only in player_sog_odds: {only_in_player_sog_odds}")
-
-        if enable_logging:
+            logging.info(f"Game IDs only in {table_name}: {only_in_odds_table}")
             logging.info("Completed comparison of game_ids.")
             
         return {
@@ -802,13 +867,13 @@ def get_mismatched_game_ids_with_details(enable_logging=False):
                 }
                 for row in only_in_game_info
             ],
-            'only_in_player_sog_odds': list(only_in_player_sog_odds)
+            'only_in_odds_table': list(only_in_odds_table)
         }
 
     except Exception as e:
         if enable_logging:
-            logging.error("An error occurred while comparing game_ids: %s", e)
-        return {'only_in_game_info': [], 'only_in_player_sog_odds': []}
+            logging.error(f"An error occurred while comparing game_ids: {e}")
+        return {'only_in_game_info': [], 'only_in_odds_table': []}
     finally:
         if cursor:
             cursor.close()
