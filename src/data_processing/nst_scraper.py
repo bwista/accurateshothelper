@@ -116,7 +116,8 @@ def nst_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=N
         f"https://www.naturalstattrick.com/playerteams.php?"
         f"fromseason={fromseason}&thruseason={thruseason}&stype={stype}&sit={sit}"
         f"&score=all&stdoi={stdoi}&rate={rate}&team=ALL&pos={pos}&loc={loc}&toi=0"
-        f"&gpfilt=gpdate&fd={startdate}&td={enddate}&lines={lines}&draftteam=ALL"
+        f"&gpfilt=gpdate&fd={'' if startdate == enddate else startdate}&td={enddate}"
+        f"&tgp=410&lines={lines}&draftteam=ALL"
     )
 
     try:
@@ -251,7 +252,9 @@ def nst_team_on_ice_scraper(fromseason=None, thruseason=None, startdate='', endd
     url = (
         f"https://www.naturalstattrick.com/teamtable.php?"
         f"fromseason={fromseason}&thruseason={thruseason}&stype={stype}&sit={sit}"
-        f"&score=all&rate=n&team=all&loc=B&gpf=410&fd={startdate}&td={enddate}"
+        f"&score=all&rate=n&team=all&loc=B"
+        f"&gpfilt=gpdate&fd={'' if startdate == enddate else startdate}&td={enddate}"
+        f"&tgp=410"
     )
 
     try:
