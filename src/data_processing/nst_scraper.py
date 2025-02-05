@@ -41,6 +41,10 @@ def nst_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=N
     if lines not in ['multi', 'single']:
         raise ValueError("lines must be either 'multi' for split results or 'single' for combined results.")
         
+    # Override pos to 'S' when requesting goalie stats as the API requires this
+    if stdoi == 'g':
+        pos = 'S'
+        
     # Handle date calculations
     if enddate is None:
         raise ValueError("enddate must be provided")
@@ -116,13 +120,39 @@ def nst_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=N
         f"https://www.naturalstattrick.com/playerteams.php?"
         f"fromseason={fromseason}&thruseason={thruseason}&stype={stype}&sit={sit}"
         f"&score=all&stdoi={stdoi}&rate={rate}&team=ALL&pos={pos}&loc={loc}&toi=0"
-        f"&gpfilt=gpdate&fd={'' if startdate == enddate else startdate}&td={enddate}"
+        f"&gpfilt=gpdate&fd={startdate}&td={enddate}"
         f"&tgp=410&lines={lines}&draftteam=ALL"
     )
 
+    # Add browser-like headers
+    headers = {
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'accept-encoding': 'gzip, deflate, br, zstd',
+        'accept-language': 'en-US,en;q=0.8',
+        'cache-control': 'no-cache',
+        'connection': 'keep-alive',
+        'host': 'www.naturalstattrick.com',
+        'pragma': 'no-cache',
+        'referer': 'https://www.naturalstattrick.com/playerteams.php?stdoi=g',
+        'sec-ch-ua': '"Not A(Brand";v="8", "Chromium";v="132", "Brave";v="132"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'document',
+        'sec-fetch-mode': 'navigate',
+        'sec-fetch-site': 'same-origin',
+        'sec-fetch-user': '?1',
+        'sec-gpc': '1',
+        'upgrade-insecure-requests': '1',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
+    }
+
+    # First make a request to get a session cookie
+    session = requests.Session()
+    session.get('https://www.naturalstattrick.com/playerteams.php?stdoi=g')
+
     try:
-        # Send a GET request to the URL
-        response = requests.get(url)
+        # Send a GET request to the URL with headers using the session
+        response = session.get(url, headers=headers)
         response.raise_for_status()  # Raises HTTPError for bad responses
 
         # Wrap the response text in StringIO
