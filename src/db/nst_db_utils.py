@@ -10,7 +10,7 @@ from src.data_processing.nst_scraper import nst_on_ice_scraper
 
 logger = logging.getLogger(__name__)
 
-def insert_goalie_stats_df(df: pd.DataFrame, conn, cursor) -> None:
+def insert_goalie_stats_df(df: pd.DataFrame, conn, cursor, table_name: str = "goalie_stats") -> None:
     """
     Insert goalie stats dataframe into database using psycopg2.
     
@@ -26,12 +26,11 @@ def insert_goalie_stats_df(df: pd.DataFrame, conn, cursor) -> None:
       - avg_shot_distance, avg_goal_distance,
       - date
       
-    The INSERT uses (player, date) as the conflict target.
-    
     Args:
         df: DataFrame containing goalie stats
         conn: Database connection
         cursor: Database cursor
+        table_name: Name of the table to insert into (default: "goalie_stats")
     """
     # Clean column names to match PostgreSQL table
     df.columns = (
@@ -81,9 +80,21 @@ def insert_goalie_stats_df(df: pd.DataFrame, conn, cursor) -> None:
         logger.error(f"Missing columns after cleaning: {missing}")
         raise KeyError(f"Missing columns: {missing}")
     
-    # Prepare the INSERT statement
-    insert_query = """
-    INSERT INTO goalie_stats (
+    # First, delete any existing records for the date we're inserting
+    # This ensures we don't have duplicates
+    delete_query = f"""
+    DELETE FROM {table_name}
+    WHERE date = %(date)s;
+    """
+    
+    # Get unique dates from the DataFrame
+    unique_dates = df['date'].unique()
+    for date in unique_dates:
+        cursor.execute(delete_query, {'date': date})
+    
+    # Prepare the INSERT statement with dynamic table name
+    insert_query = f"""
+    INSERT INTO {table_name} (
         player, team, gp, toi,
         shots_against, saves, goals_against, sv_pct,
         gaa, gsaa, xg_against, hd_shots_against, hd_saves,
@@ -103,40 +114,7 @@ def insert_goalie_stats_df(df: pd.DataFrame, conn, cursor) -> None:
         %(ldsv_pct)s, %(ldgaa)s, %(ldgsaa)s, %(rush_attempts_against)s, %(rebound_attempts_against)s,
         %(avg_shot_distance)s, %(avg_goal_distance)s,
         %(date)s
-    )
-    ON CONFLICT (player, date) DO UPDATE SET
-        team = EXCLUDED.team,
-        gp = EXCLUDED.gp,
-        toi = EXCLUDED.toi,
-        shots_against = EXCLUDED.shots_against,
-        saves = EXCLUDED.saves,
-        goals_against = EXCLUDED.goals_against,
-        sv_pct = EXCLUDED.sv_pct,
-        gaa = EXCLUDED.gaa,
-        gsaa = EXCLUDED.gsaa,
-        xg_against = EXCLUDED.xg_against,
-        hd_shots_against = EXCLUDED.hd_shots_against,
-        hd_saves = EXCLUDED.hd_saves,
-        hd_goals_against = EXCLUDED.hd_goals_against,
-        hdsv_pct = EXCLUDED.hdsv_pct,
-        hdgaa = EXCLUDED.hdgaa,
-        hdgsaa = EXCLUDED.hdgsaa,
-        md_shots_against = EXCLUDED.md_shots_against,
-        md_saves = EXCLUDED.md_saves,
-        md_goals_against = EXCLUDED.md_goals_against,
-        mdsv_pct = EXCLUDED.mdsv_pct,
-        mdgaa = EXCLUDED.mdgaa,
-        mdgsaa = EXCLUDED.mdgsaa,
-        ld_shots_against = EXCLUDED.ld_shots_against,
-        ld_saves = EXCLUDED.ld_saves,
-        ld_goals_against = EXCLUDED.ld_goals_against,
-        ldsv_pct = EXCLUDED.ldsv_pct,
-        ldgaa = EXCLUDED.ldgaa,
-        ldgsaa = EXCLUDED.ldgsaa,
-        rush_attempts_against = EXCLUDED.rush_attempts_against,
-        rebound_attempts_against = EXCLUDED.rebound_attempts_against,
-        avg_shot_distance = EXCLUDED.avg_shot_distance,
-        avg_goal_distance = EXCLUDED.avg_goal_distance;
+    );
     """
     
     # Convert DataFrame to a list of dictionaries for batch insertion
@@ -149,7 +127,8 @@ def get_goalie_stats(
     team: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    db_prefix: str = "NST_DB_"
+    db_prefix: str = "NST_DB_",
+    table_name: str = "goalie_stats_all"
 ) -> pd.DataFrame:
     """
     Retrieve goalie stats from the database with optional filters.
@@ -160,6 +139,7 @@ def get_goalie_stats(
         start_date: Optional start date for date range
         end_date: Optional end date for date range
         db_prefix: Database environment variable prefix
+        table_name: Name of the table to query (default: "goalie_stats_all")
     Returns:
         DataFrame containing goalie statistics
     """
@@ -210,7 +190,7 @@ def get_goalie_stats(
             rebound_attempts_against,
             avg_shot_distance,
             avg_goal_distance
-        FROM goalie_stats
+        FROM {table_name}
         WHERE {where_clause}
         ORDER BY date DESC
     """
@@ -244,7 +224,8 @@ def get_goalie_rolling_stats(
     goalie_name: str,
     date: str,
     n_games: int = 5,
-    db_prefix: str = "NST_DB_"
+    db_prefix: str = "NST_DB_",
+    table_name: str = "goalie_stats_all"
 ) -> pd.DataFrame:
     """
     Get rolling average stats for a specific goalie up to a given date.
@@ -254,13 +235,14 @@ def get_goalie_rolling_stats(
         date: Date to get stats up to
         n_games: Number of games to look back
         db_prefix: Database environment variable prefix
+        table_name: Name of the table to query (default: "goalie_stats_all")
     Returns:
         DataFrame with rolling average statistics
     """
-    query = """
+    query = f"""
         WITH recent_games AS (
             SELECT *
-            FROM goalie_stats
+            FROM {table_name}
             WHERE player = %s
             AND date <= %s
             ORDER BY date DESC
@@ -307,7 +289,8 @@ def get_goalie_comparison(
     date: str,
     n_games: int = 5,
     min_games: int = 3,
-    db_prefix: str = "NST_DB_"
+    db_prefix: str = "NST_DB_",
+    table_name: str = "goalie_stats_all"
 ) -> pd.DataFrame:
     """
     Get comparison stats for all goalies with recent activity.
@@ -317,10 +300,11 @@ def get_goalie_comparison(
         n_games: Number of games to look back
         min_games: Minimum number of games played to be included
         db_prefix: Database environment variable prefix
+        table_name: Name of the table to query (default: "goalie_stats_all")
     Returns:
         DataFrame with comparison statistics for all active goalies
     """
-    query = """
+    query = f"""
         WITH recent_games AS (
             SELECT 
                 player,
@@ -333,7 +317,7 @@ def get_goalie_comparison(
                 AVG(md_shots_against) as avg_md_shots,
                 AVG(ld_shots_against) as avg_ld_shots,
                 AVG(gsaa) as avg_gsaa
-            FROM goalie_stats
+            FROM {table_name}
             WHERE date <= %s
             GROUP BY player
             HAVING COUNT(*) >= %s
@@ -372,7 +356,8 @@ def scrape_goalie_stats_range(
     end_date: str,
     db_prefix: str = "NST_DB_",
     delay_min: int = 3,
-    delay_max: int = 7
+    delay_max: int = 7,
+    situation: str = "all"
 ) -> None:
     """
     Scrape goalie stats across a date range and save to the database.
@@ -388,7 +373,11 @@ def scrape_goalie_stats_range(
         db_prefix: Prefix for database environment variables
         delay_min: Minimum delay between requests (seconds)
         delay_max: Maximum delay between requests (seconds)
+        situation: The game situation to scrape ('all' or '5v5'). Determines which table to use.
     """
+    # Determine table name based on situation
+    table_name = "goalie_stats_all" if situation == "all" else "goalie_stats_5v5"
+    
     # Convert dates to datetime objects
     start = datetime.strptime(start_date, '%Y-%m-%d')
     end = datetime.strptime(end_date, '%Y-%m-%d')
@@ -410,7 +399,7 @@ def scrape_goalie_stats_range(
             goalie_stats_df = nst_on_ice_scraper(
                 startdate=current_date_str,
                 enddate=current_date_str,
-                sit='all',
+                sit=situation,
                 pos='G',
                 rate='n',
                 stdoi='g',
@@ -436,8 +425,8 @@ def scrape_goalie_stats_range(
                 raise Exception("Failed to establish database connection")
             cursor = conn.cursor()
             
-            # Insert (or update) the day's data
-            insert_goalie_stats_df(goalie_stats_df, conn, cursor)
+            # Insert (or update) the day's data with the appropriate table name
+            insert_goalie_stats_df(goalie_stats_df, conn, cursor, table_name)
             
             successful_scrapes += 1
             logger.info(f"Successfully saved data for {current_date_str}")
@@ -468,4 +457,5 @@ def scrape_goalie_stats_range(
     - Successful scrapes: {successful_scrapes}
     - Failed scrapes: {failed_scrapes}
     - Date range: {start_date} to {end_date}
+    - Table: {table_name}
     """) 
