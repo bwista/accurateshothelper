@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 from src.db.base_utils import connect_db, disconnect_db
 from src.data_processing.nst_scraper import nst_on_ice_scraper
+from src.data_processing.season_utils import get_season_for_date, NHL_SEASONS, get_season_end_date
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,7 @@ def get_goalie_stats(
     team: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    last_n: Optional[int] = None,
     db_prefix: str = "NST_DB_",
     table_name: str = "goalie_stats_all"
 ) -> pd.DataFrame:
@@ -138,6 +140,7 @@ def get_goalie_stats(
         team: Optional team name to filter by
         start_date: Optional start date for date range
         end_date: Optional end date for date range
+        last_n: Optional number of days to look back from end_date, will span across seasons if needed
         db_prefix: Database environment variable prefix
         table_name: Name of the table to query (default: "goalie_stats_all")
     Returns:
@@ -152,6 +155,53 @@ def get_goalie_stats(
     if team:
         conditions.append("team = %s")
         params.append(team)
+        
+    # Handle date filtering with last_n logic
+    if last_n is not None:
+        if end_date is None:
+            # If no end_date provided, use current date
+            end_date = datetime.now().strftime('%Y-%m-%d')
+            
+        try:
+            # Calculate start_date based on last_n days with season spanning logic
+            end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
+            end_season = get_season_for_date(end_date)
+            
+            if end_season in NHL_SEASONS:
+                season_start_obj = datetime.strptime(NHL_SEASONS[end_season]['start'], '%Y-%m-%d')
+                
+                # Calculate days since season start
+                days_since_season_start = (end_date_obj - season_start_obj).days
+                
+                if days_since_season_start < last_n:
+                    # Need to go into previous season
+                    prev_season = end_season - 10001  # e.g., 20242025 -> 20232024
+                    if prev_season in NHL_SEASONS:
+                        # Calculate remaining days to look back in previous season
+                        remaining_days = last_n - days_since_season_start
+                        prev_season_end = get_season_end_date(prev_season, 2)  # Using stype=2 for regular season
+                        prev_season_end_obj = datetime.strptime(prev_season_end, '%Y-%m-%d')
+                        start_date_obj = prev_season_end_obj - timedelta(days=remaining_days)
+                        start_date = start_date_obj.strftime('%Y-%m-%d')
+                    else:
+                        # If no previous season data, just go back from season start
+                        start_date_obj = season_start_obj - timedelta(days=last_n)
+                        start_date = start_date_obj.strftime('%Y-%m-%d')
+                else:
+                    # All dates within current season
+                    start_date_obj = end_date_obj - timedelta(days=last_n)
+                    start_date = start_date_obj.strftime('%Y-%m-%d')
+            else:
+                # If season not found, just do simple date arithmetic
+                start_date_obj = end_date_obj - timedelta(days=last_n)
+                start_date = start_date_obj.strftime('%Y-%m-%d')
+                
+        except ValueError as e:
+            logger.error(f"Error calculating dates: {e}")
+            # Fall back to simple date arithmetic if season logic fails
+            start_date_obj = end_date_obj - timedelta(days=last_n)
+            start_date = start_date_obj.strftime('%Y-%m-%d')
+        
     if start_date:
         conditions.append("date >= %s")
         params.append(start_date)
@@ -214,7 +264,16 @@ def get_goalie_stats(
         
     except Exception as e:
         logger.error(f"Error retrieving goalie stats: {e}")
-        raise
+        # Return an empty DataFrame with the expected columns if there's an error
+        return pd.DataFrame(columns=[
+            'date', 'player', 'team', 'toi', 'shots_against', 'saves',
+            'goals_against', 'sv_pct', 'gaa', 'gsaa', 'xg_against',
+            'hd_shots_against', 'hd_saves', 'hd_goals_against', 'hdsv_pct',
+            'md_shots_against', 'md_saves', 'md_goals_against', 'mdsv_pct',
+            'ld_shots_against', 'ld_saves', 'ld_goals_against', 'ldsv_pct',
+            'rush_attempts_against', 'rebound_attempts_against',
+            'avg_shot_distance', 'avg_goal_distance'
+        ])
     finally:
         if conn:
             cur.close()
@@ -373,10 +432,17 @@ def scrape_goalie_stats_range(
         db_prefix: Prefix for database environment variables
         delay_min: Minimum delay between requests (seconds)
         delay_max: Maximum delay between requests (seconds)
-        situation: The game situation to scrape ('all' or '5v5'). Determines which table to use.
+        situation: The game situation to scrape ('all', '5v5', or 'pk'). Determines which table to use.
     """
     # Determine table name based on situation
-    table_name = "goalie_stats_all" if situation == "all" else "goalie_stats_5v5"
+    if situation == "all":
+        table_name = "goalie_stats_all"
+    elif situation == "5v5":
+        table_name = "goalie_stats_5v5"
+    elif situation == "pk":
+        table_name = "goalie_stats_pk"
+    else:
+        raise ValueError(f"Invalid situation: {situation}. Must be one of: 'all', '5v5', 'pk'")
     
     # Convert dates to datetime objects
     start = datetime.strptime(start_date, '%Y-%m-%d')

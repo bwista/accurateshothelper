@@ -80,4 +80,166 @@ CREATE INDEX IF NOT EXISTS idx_player_sog_odds_last_update ON player_sog_odds(la
 COMMENT ON TABLE players IS 'NHL player information and current team details';
 COMMENT ON TABLE game_info IS 'Basic game information from The Odds API';
 COMMENT ON TABLE moneyline_odds IS 'Moneyline (head-to-head) betting odds for NHL games';
-COMMENT ON TABLE player_sog_odds IS 'Player shots on goal betting odds for NHL games'; 
+COMMENT ON TABLE player_sog_odds IS 'Player shots on goal betting odds for NHL games';
+
+-- Create Goalie Stats Tables
+
+-- 5v5 Goalie Stats Table
+CREATE TABLE IF NOT EXISTS public.goalie_stats_5v5
+(
+    player character varying(200) COLLATE pg_catalog."default" NOT NULL,
+    team character varying(10) COLLATE pg_catalog."default" NOT NULL,
+    gp integer,
+    toi numeric,
+    shots_against integer,
+    saves integer,
+    goals_against integer,
+    sv_pct numeric,
+    gaa numeric,
+    gsaa numeric,
+    xg_against numeric,
+    hd_shots_against integer,
+    hd_saves integer,
+    hd_goals_against integer,
+    hdsv_pct numeric,
+    hdgaa numeric,
+    hdgsaa numeric,
+    md_shots_against integer,
+    md_saves integer,
+    md_goals_against integer,
+    mdsv_pct numeric,
+    mdgaa numeric,
+    mdgsaa numeric,
+    ld_shots_against integer,
+    ld_saves integer,
+    ld_goals_against integer,
+    ldsv_pct numeric,
+    ldgaa numeric,
+    ldgsaa numeric,
+    rush_attempts_against integer,
+    rebound_attempts_against integer,
+    avg_shot_distance numeric,
+    avg_goal_distance numeric,
+    date date NOT NULL,
+    last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    season integer,
+    CONSTRAINT goalie_stats_5v5_pkey PRIMARY KEY (player, date)
+)
+TABLESPACE pg_default;
+
+ALTER TABLE IF EXISTS public.goalie_stats_5v5
+    OWNER to postgres;
+
+COMMENT ON TABLE public.goalie_stats_5v5
+    IS 'NHL goalie statistics at 5v5 play including high, medium, and low danger metrics';
+
+-- All Situations Goalie Stats Table
+CREATE TABLE IF NOT EXISTS public.goalie_stats_all
+(
+    player character varying(200) COLLATE pg_catalog."default" NOT NULL,
+    team character varying(10) COLLATE pg_catalog."default" NOT NULL,
+    gp integer,
+    toi numeric,
+    shots_against integer,
+    saves integer,
+    goals_against integer,
+    sv_pct numeric,
+    gaa numeric,
+    gsaa numeric,
+    xg_against numeric,
+    hd_shots_against integer,
+    hd_saves integer,
+    hd_goals_against integer,
+    hdsv_pct numeric,
+    hdgaa numeric,
+    hdgsaa numeric,
+    md_shots_against integer,
+    md_saves integer,
+    md_goals_against integer,
+    mdsv_pct numeric,
+    mdgaa numeric,
+    mdgsaa numeric,
+    ld_shots_against integer,
+    ld_saves integer,
+    ld_goals_against integer,
+    ldsv_pct numeric,
+    ldgaa numeric,
+    ldgsaa numeric,
+    rush_attempts_against integer,
+    rebound_attempts_against integer,
+    avg_shot_distance numeric,
+    avg_goal_distance numeric,
+    date date NOT NULL,
+    last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    season integer,
+    CONSTRAINT goalie_stats_all_pkey PRIMARY KEY (player, date)
+)
+TABLESPACE pg_default;
+
+ALTER TABLE IF EXISTS public.goalie_stats_all
+    OWNER to postgres;
+
+COMMENT ON TABLE public.goalie_stats_all
+    IS 'NHL goalie statistics for all game situations including high, medium, and low danger metrics';
+
+-- Penalty Kill Goalie Stats Table
+CREATE TABLE IF NOT EXISTS public.goalie_stats_pk
+(
+    player character varying(200) COLLATE pg_catalog."default" NOT NULL,
+    team character varying(10) COLLATE pg_catalog."default" NOT NULL,
+    gp integer,
+    toi numeric,
+    shots_against integer,
+    saves integer,
+    goals_against integer,
+    sv_pct numeric,
+    gaa numeric,
+    gsaa numeric,
+    xg_against numeric,
+    hd_shots_against integer,
+    hd_saves integer,
+    hd_goals_against integer,
+    hdsv_pct numeric,
+    hdgaa numeric,
+    hdgsaa numeric,
+    md_shots_against integer,
+    md_saves integer,
+    md_goals_against integer,
+    mdsv_pct numeric,
+    mdgaa numeric,
+    mdgsaa numeric,
+    ld_shots_against integer,
+    ld_saves integer,
+    ld_goals_against integer,
+    ldsv_pct numeric,
+    ldgaa numeric,
+    ldgsaa numeric,
+    rush_attempts_against integer,
+    rebound_attempts_against integer,
+    avg_shot_distance numeric,
+    avg_goal_distance numeric,
+    date date NOT NULL,
+    last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    season integer,
+    CONSTRAINT goalie_stats_pk_pkey PRIMARY KEY (player, date)
+)
+TABLESPACE pg_default;
+
+ALTER TABLE IF EXISTS public.goalie_stats_pk
+    OWNER to postgres;
+
+COMMENT ON TABLE public.goalie_stats_pk
+    IS 'NHL goalie statistics during penalty kill situations including high, medium, and low danger metrics';
+
+-- Create indices for goalie stats tables
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_5v5_player ON goalie_stats_5v5(player);
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_5v5_date ON goalie_stats_5v5(date);
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_5v5_team ON goalie_stats_5v5(team);
+
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_all_player ON goalie_stats_all(player);
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_all_date ON goalie_stats_all(date);
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_all_team ON goalie_stats_all(team);
+
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_pk_player ON goalie_stats_pk(player);
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_pk_date ON goalie_stats_pk(date);
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_pk_team ON goalie_stats_pk(team); 

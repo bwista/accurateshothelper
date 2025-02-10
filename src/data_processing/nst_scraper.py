@@ -17,7 +17,7 @@ def nst_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=N
         enddate (str): The end date in the format YYYY-MM-DD (e.g., 2024-10-14). Required.
         last_n (int, optional): Number of days to look back from enddate. If provided, overrides startdate.
         stype (int, optional): Type of statistics to retrieve. Defaults to 2 for regular season.
-        sit (str, optional): Situation type to filter by (e.g., '5v5'). Defaults to '5v5'.
+        sit (str, optional): Situation type to filter by (e.g., '5v5', 'all', 'pk'). Defaults to '5v5'.
         stdoi (str, optional): Statistic type of interest. Use 'std' for individual stats, 'oi' for on-ice stats, or 'g' for goalies. Defaults to 'std'.
         pos (str, optional): Type of player statistics to retrieve. Use 'S' for skaters or 'G' for goalies. Defaults to 'S'.
         rate (str, optional): Stat type, rate or count. Use 'n' or 'y'. Defaults to 'n'.
@@ -40,6 +40,8 @@ def nst_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=N
         raise ValueError("loc must be 'B' for both home and away, 'H' for home, or 'A' for away.")
     if lines not in ['multi', 'single']:
         raise ValueError("lines must be either 'multi' for split results or 'single' for combined results.")
+    if sit not in ['5v5', 'all', 'pk']:
+        raise ValueError("sit must be one of: '5v5', 'all', 'pk'")
         
     # Override pos to 'S' when requesting goalie stats as the API requires this
     if stdoi == 'g':
