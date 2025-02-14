@@ -1,5 +1,5 @@
 -- Create NHL Players Database Tables
-CREATE TABLE IF NOT EXISTS players (
+CREATE TABLE IF NOT EXISTS public.players (
     player_id INTEGER PRIMARY KEY,
     first_name VARCHAR(100),
     last_name VARCHAR(100),
@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_players_current_team ON players(current_team_id);
 -- Create The Odds Database Tables
 
 -- Game Information Table
-CREATE TABLE IF NOT EXISTS game_info (
+CREATE TABLE IF NOT EXISTS public.game_info (
     id VARCHAR(50) PRIMARY KEY,
     sport_key VARCHAR(50) NOT NULL,
     sport_title VARCHAR(50) NOT NULL,
@@ -40,7 +40,7 @@ CREATE INDEX IF NOT EXISTS idx_game_info_commence_time ON game_info(commence_tim
 CREATE INDEX IF NOT EXISTS idx_game_info_teams ON game_info(home_team, away_team);
 
 -- Moneyline Odds Table
-CREATE TABLE IF NOT EXISTS moneyline_odds (
+CREATE TABLE IF NOT EXISTS public.moneyline_odds (
     game_id VARCHAR(50) NOT NULL,
     sportsbook VARCHAR(50) NOT NULL,
     team_name VARCHAR(100) NOT NULL,
@@ -57,7 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_moneyline_odds_sportsbook ON moneyline_odds(sport
 CREATE INDEX IF NOT EXISTS idx_moneyline_odds_last_update ON moneyline_odds(last_update);
 
 -- Player Shots on Goal Odds Table
-CREATE TABLE IF NOT EXISTS player_sog_odds (
+CREATE TABLE IF NOT EXISTS public.player_sog_odds (
     game_id VARCHAR(50) NOT NULL,
     sportsbook VARCHAR(50) NOT NULL,
     player_name VARCHAR(200) NOT NULL,
@@ -76,19 +76,46 @@ CREATE INDEX IF NOT EXISTS idx_player_sog_odds_player ON player_sog_odds(player_
 CREATE INDEX IF NOT EXISTS idx_player_sog_odds_sportsbook ON player_sog_odds(sportsbook);
 CREATE INDEX IF NOT EXISTS idx_player_sog_odds_last_update ON player_sog_odds(last_update);
 
--- Add comments to tables and columns
-COMMENT ON TABLE players IS 'NHL player information and current team details';
-COMMENT ON TABLE game_info IS 'Basic game information from The Odds API';
-COMMENT ON TABLE moneyline_odds IS 'Moneyline (head-to-head) betting odds for NHL games';
-COMMENT ON TABLE player_sog_odds IS 'Player shots on goal betting odds for NHL games';
+-- Create Prop Odds Database Tables
 
--- Create Goalie Stats Tables
+-- Game Information Table for Prop Odds
+CREATE TABLE IF NOT EXISTS public.prop_game_info (
+    id VARCHAR(50) PRIMARY KEY,
+    game_id VARCHAR(50) NOT NULL,
+    away_team VARCHAR(100) NOT NULL,
+    home_team VARCHAR(100) NOT NULL,
+    start_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    last_updated TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indices for prop_game_info table
+CREATE INDEX IF NOT EXISTS idx_prop_game_info_game_id ON prop_game_info(game_id);
+CREATE INDEX IF NOT EXISTS idx_prop_game_info_teams ON prop_game_info(home_team, away_team);
+CREATE INDEX IF NOT EXISTS idx_prop_game_info_start ON prop_game_info(start_timestamp);
+
+-- Player Shots Over/Under Table
+CREATE TABLE IF NOT EXISTS public.player_shots_ou (
+    game_id VARCHAR(50) NOT NULL,
+    sportsbook VARCHAR(50) NOT NULL,
+    player VARCHAR(200) NOT NULL,
+    ou VARCHAR(10) NOT NULL,
+    handicap NUMERIC(4,1) NOT NULL,
+    odds INTEGER NOT NULL,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    PRIMARY KEY (game_id, sportsbook, player, ou, handicap, odds, timestamp)
+);
+
+-- Create indices for player_shots_ou table
+CREATE INDEX IF NOT EXISTS idx_player_shots_ou_game ON player_shots_ou(game_id);
+CREATE INDEX IF NOT EXISTS idx_player_shots_ou_player ON player_shots_ou(player);
+CREATE INDEX IF NOT EXISTS idx_player_shots_ou_timestamp ON player_shots_ou(timestamp);
+
+-- Create Natural Stat Trick Database Tables
 
 -- 5v5 Goalie Stats Table
-CREATE TABLE IF NOT EXISTS public.goalie_stats_5v5
-(
-    player character varying(200) COLLATE pg_catalog."default" NOT NULL,
-    team character varying(10) COLLATE pg_catalog."default" NOT NULL,
+CREATE TABLE IF NOT EXISTS public.goalie_stats_5v5 (
+    player character varying(200) NOT NULL,
+    team character varying(10) NOT NULL,
     gp integer,
     toi numeric,
     shots_against integer,
@@ -124,20 +151,12 @@ CREATE TABLE IF NOT EXISTS public.goalie_stats_5v5
     last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     season integer,
     CONSTRAINT goalie_stats_5v5_pkey PRIMARY KEY (player, date)
-)
-TABLESPACE pg_default;
-
-ALTER TABLE IF EXISTS public.goalie_stats_5v5
-    OWNER to postgres;
-
-COMMENT ON TABLE public.goalie_stats_5v5
-    IS 'NHL goalie statistics at 5v5 play including high, medium, and low danger metrics';
+);
 
 -- All Situations Goalie Stats Table
-CREATE TABLE IF NOT EXISTS public.goalie_stats_all
-(
-    player character varying(200) COLLATE pg_catalog."default" NOT NULL,
-    team character varying(10) COLLATE pg_catalog."default" NOT NULL,
+CREATE TABLE IF NOT EXISTS public.goalie_stats_all (
+    player character varying(200) NOT NULL,
+    team character varying(10) NOT NULL,
     gp integer,
     toi numeric,
     shots_against integer,
@@ -173,20 +192,12 @@ CREATE TABLE IF NOT EXISTS public.goalie_stats_all
     last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     season integer,
     CONSTRAINT goalie_stats_all_pkey PRIMARY KEY (player, date)
-)
-TABLESPACE pg_default;
-
-ALTER TABLE IF EXISTS public.goalie_stats_all
-    OWNER to postgres;
-
-COMMENT ON TABLE public.goalie_stats_all
-    IS 'NHL goalie statistics for all game situations including high, medium, and low danger metrics';
+);
 
 -- Penalty Kill Goalie Stats Table
-CREATE TABLE IF NOT EXISTS public.goalie_stats_pk
-(
-    player character varying(200) COLLATE pg_catalog."default" NOT NULL,
-    team character varying(10) COLLATE pg_catalog."default" NOT NULL,
+CREATE TABLE IF NOT EXISTS public.goalie_stats_pk (
+    player character varying(200) NOT NULL,
+    team character varying(10) NOT NULL,
     gp integer,
     toi numeric,
     shots_against integer,
@@ -222,24 +233,31 @@ CREATE TABLE IF NOT EXISTS public.goalie_stats_pk
     last_updated timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     season integer,
     CONSTRAINT goalie_stats_pk_pkey PRIMARY KEY (player, date)
-)
-TABLESPACE pg_default;
-
-ALTER TABLE IF EXISTS public.goalie_stats_pk
-    OWNER to postgres;
-
-COMMENT ON TABLE public.goalie_stats_pk
-    IS 'NHL goalie statistics during penalty kill situations including high, medium, and low danger metrics';
+);
 
 -- Create indices for goalie stats tables
 CREATE INDEX IF NOT EXISTS idx_goalie_stats_5v5_player ON goalie_stats_5v5(player);
 CREATE INDEX IF NOT EXISTS idx_goalie_stats_5v5_date ON goalie_stats_5v5(date);
 CREATE INDEX IF NOT EXISTS idx_goalie_stats_5v5_team ON goalie_stats_5v5(team);
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_5v5_season ON goalie_stats_5v5(season);
 
 CREATE INDEX IF NOT EXISTS idx_goalie_stats_all_player ON goalie_stats_all(player);
 CREATE INDEX IF NOT EXISTS idx_goalie_stats_all_date ON goalie_stats_all(date);
 CREATE INDEX IF NOT EXISTS idx_goalie_stats_all_team ON goalie_stats_all(team);
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_all_season ON goalie_stats_all(season);
 
 CREATE INDEX IF NOT EXISTS idx_goalie_stats_pk_player ON goalie_stats_pk(player);
 CREATE INDEX IF NOT EXISTS idx_goalie_stats_pk_date ON goalie_stats_pk(date);
-CREATE INDEX IF NOT EXISTS idx_goalie_stats_pk_team ON goalie_stats_pk(team); 
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_pk_team ON goalie_stats_pk(team);
+CREATE INDEX IF NOT EXISTS idx_goalie_stats_pk_season ON goalie_stats_pk(season);
+
+-- Add comments to tables and columns
+COMMENT ON TABLE public.players IS 'NHL player information and current team details';
+COMMENT ON TABLE public.game_info IS 'Basic game information from The Odds API';
+COMMENT ON TABLE public.moneyline_odds IS 'Moneyline (head-to-head) betting odds for NHL games';
+COMMENT ON TABLE public.player_sog_odds IS 'Player shots on goal betting odds for NHL games';
+COMMENT ON TABLE public.prop_game_info IS 'Game information for prop betting odds';
+COMMENT ON TABLE public.player_shots_ou IS 'Player shots over/under prop betting odds';
+COMMENT ON TABLE public.goalie_stats_5v5 IS 'NHL goalie statistics at 5v5 play including high, medium, and low danger metrics';
+COMMENT ON TABLE public.goalie_stats_all IS 'NHL goalie statistics for all game situations including high, medium, and low danger metrics';
+COMMENT ON TABLE public.goalie_stats_pk IS 'NHL goalie statistics during penalty kill situations including high, medium, and low danger metrics'; 
