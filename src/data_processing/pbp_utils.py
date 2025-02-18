@@ -39,7 +39,9 @@ def get_matchup_games(start_date, end_date):
             # Skip postponed games
             if game.get('gameScheduleState') == 'PPD':
                 continue
-                
+            if game.get('gameType') != 2:
+                continue
+            
             game_start_time = game['startTimeUTC']  # Read the game's start time
             # game_date = datetime.strptime(game_date_timestamp, '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d')
             game_date = day['date']
