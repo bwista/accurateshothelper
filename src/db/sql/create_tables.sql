@@ -76,6 +76,26 @@ CREATE INDEX IF NOT EXISTS idx_player_sog_odds_player ON player_sog_odds(player_
 CREATE INDEX IF NOT EXISTS idx_player_sog_odds_sportsbook ON player_sog_odds(sportsbook);
 CREATE INDEX IF NOT EXISTS idx_player_sog_odds_last_update ON player_sog_odds(last_update);
 
+-- Player Saves Odds Table
+CREATE TABLE IF NOT EXISTS public.player_saves_odds (
+    game_id VARCHAR(50) NOT NULL,
+    sportsbook VARCHAR(50) NOT NULL,
+    player_name VARCHAR(200) NOT NULL,
+    market_type VARCHAR(50) NOT NULL,
+    handicap NUMERIC(4,1) NOT NULL,
+    price INTEGER NOT NULL,
+    last_update TIMESTAMP WITH TIME ZONE NOT NULL,
+    scraped_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    PRIMARY KEY (game_id, sportsbook, player_name, market_type, handicap),
+    FOREIGN KEY (game_id) REFERENCES game_info(id)
+);
+
+-- Create indices for player_saves_odds table
+CREATE INDEX IF NOT EXISTS idx_player_saves_odds_game ON player_saves_odds(game_id);
+CREATE INDEX IF NOT EXISTS idx_player_saves_odds_player ON player_saves_odds(player_name);
+CREATE INDEX IF NOT EXISTS idx_player_saves_odds_sportsbook ON player_saves_odds(sportsbook);
+CREATE INDEX IF NOT EXISTS idx_player_saves_odds_last_update ON player_saves_odds(last_update);
+
 -- Create Prop Odds Database Tables
 
 -- Game Information Table for Prop Odds
@@ -256,6 +276,7 @@ COMMENT ON TABLE public.players IS 'NHL player information and current team deta
 COMMENT ON TABLE public.game_info IS 'Basic game information from The Odds API';
 COMMENT ON TABLE public.moneyline_odds IS 'Moneyline (head-to-head) betting odds for NHL games';
 COMMENT ON TABLE public.player_sog_odds IS 'Player shots on goal betting odds for NHL games';
+COMMENT ON TABLE public.player_saves_odds IS 'Player saves betting odds for NHL games';
 COMMENT ON TABLE public.prop_game_info IS 'Game information for prop betting odds';
 COMMENT ON TABLE public.player_shots_ou IS 'Player shots over/under prop betting odds';
 COMMENT ON TABLE public.goalie_stats_5v5 IS 'NHL goalie statistics at 5v5 play including high, medium, and low danger metrics';
