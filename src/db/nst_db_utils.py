@@ -6,8 +6,9 @@ from typing import Optional
 from datetime import datetime, timedelta
 
 from src.db.base_utils import connect_db, disconnect_db
-from src.data_processing.nst_scraper import nst_on_ice_scraper
+from src.data_processing.nst_scraper import nst_on_ice_scraper, nst_team_on_ice_scraper
 from src.data_processing.season_utils import get_season_for_date, NHL_SEASONS, get_season_end_date
+from src.data_processing.team_utils import get_tricode_by_fullname
 
 logger = logging.getLogger(__name__)
 
@@ -520,6 +521,214 @@ def scrape_goalie_stats_range(
     # Log the final summary
     logger.info(f"""
     Scraping completed:
+    - Successful scrapes: {successful_scrapes}
+    - Failed scrapes: {failed_scrapes}
+    - Date range: {start_date} to {end_date}
+    - Table: {table_name}
+    """)
+
+def insert_team_stats_df(df: pd.DataFrame, conn, cursor, table_name: str = "team_stats") -> None:
+    """
+    Insert team stats dataframe into database using psycopg2.
+    
+    This function cleans and maps the DataFrame's columns to match the team stats schema.
+    
+    Args:
+        df: DataFrame containing team stats
+        conn: Database connection
+        cursor: Database cursor
+        table_name: Name of the table to insert into (default: "team_stats")
+    """
+    # Clean column names to match PostgreSQL table
+    df.columns = (
+        df.columns
+        .str.replace('/', '_per_', regex=False)      # In case any '/' exists
+        .str.replace('%', '_pct', regex=False)       # Replace % with _pct
+        .str.replace(r'[^a-zA-Z0-9]', '_', regex=True)  # Replace other special characters
+        .str.replace(r'_+', '_', regex=True)         # Collapse multiple underscores
+        .str.strip('_')
+        .str.lower()
+    )
+    
+    # Replace placeholder '-' with None so that numeric columns are handled properly
+    df.replace("-", None, inplace=True)
+    
+    # Convert all numeric columns explicitly
+    numeric_columns = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
+    for col in numeric_columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    # Convert season format from string (e.g., "2023-24") to integer (e.g., 20232024)
+    if 'season' in df.columns:
+        def convert_season(season_str):
+            if pd.isna(season_str) or season_str is None:
+                return None
+            try:
+                # Handle string format like "2023-24"
+                if isinstance(season_str, str) and '-' in season_str:
+                    start_year, end_year = season_str.split('-')
+                    if len(start_year) == 4 and len(end_year) == 2:
+                        # Convert "2023-24" to 20232024
+                        return int(start_year + '20' + end_year)
+                    else:
+                        # Try to handle other formats or return None if can't convert
+                        logger.warning(f"Unexpected season format: {season_str}")
+                        return None
+                # If it's already an integer, return as is
+                elif isinstance(season_str, (int, float)):
+                    return int(season_str)
+                else:
+                    logger.warning(f"Unexpected season type: {type(season_str)}, value: {season_str}")
+                    return None
+            except Exception as e:
+                logger.error(f"Error converting season '{season_str}': {e}")
+                return None
+        
+        df['season'] = df['season'].apply(convert_season)
+    
+    # Log cleaned columns for verification
+    logger.info(f"Cleaned columns: {df.columns.tolist()}")
+    
+    # First, delete any existing records for the date we're inserting
+    # This ensures we don't have duplicates
+    delete_query = f"""
+    DELETE FROM {table_name}
+    WHERE date = %(date)s;
+    """
+    
+    # Get unique dates from the DataFrame
+    unique_dates = df['date'].unique()
+    for date in unique_dates:
+        cursor.execute(delete_query, {'date': date})
+    
+    # Dynamically create the INSERT statement based on the DataFrame columns
+    columns = df.columns.tolist()
+    placeholders = [f"%({col})s" for col in columns]
+    
+    insert_query = f"""
+    INSERT INTO {table_name} (
+        {', '.join(columns)}
+    ) VALUES (
+        {', '.join(placeholders)}
+    );
+    """
+    
+    # Convert DataFrame to a list of dictionaries for batch insertion
+    records = df.to_dict('records')
+    cursor.executemany(insert_query, records)
+    conn.commit()
+
+def scrape_team_stats_range(
+    start_date: str,
+    end_date: str,
+    db_prefix: str = "NST_DB_",
+    delay_min: int = 3,
+    delay_max: int = 7,
+    situation: str = "all",
+    stype: int = 2
+) -> None:
+    """
+    Scrape team stats across a date range and save to the database.
+    
+    This function iterates through each day in the provided date range.
+    For each day, it calls the team scraper to retrieve data by setting both startdate
+    and enddate to the same value, then inserts that day's records into the database.
+    
+    Args:
+        start_date: Start date in 'YYYY-MM-DD' format
+        end_date: End date in 'YYYY-MM-DD' format
+        db_prefix: Prefix for database environment variables
+        delay_min: Minimum delay between requests (seconds)
+        delay_max: Maximum delay between requests (seconds)
+        situation: The game situation to scrape ('all', '5v5', 'pk', or 'pp'). Determines which table to use.
+        stype: Type of statistics to retrieve. Defaults to 2 for regular season.
+    """
+    # Determine table name based on situation
+    if situation == "all":
+        table_name = "team_stats_all"
+    elif situation == "5v5":
+        table_name = "team_stats_5v5"
+    elif situation == "pk":
+        table_name = "team_stats_pk"
+    elif situation == "pp":
+        table_name = "team_stats_pp"
+    else:
+        raise ValueError(f"Invalid situation: {situation}. Must be one of: 'all', '5v5', 'pk', 'pp'")
+    
+    # Convert dates to datetime objects
+    start = datetime.strptime(start_date, '%Y-%m-%d')
+    end = datetime.strptime(end_date, '%Y-%m-%d')
+    
+    # Initialize counters for logging purposes
+    successful_scrapes = 0
+    failed_scrapes = 0
+    
+    current_date = start
+    while current_date <= end:
+        conn = None
+        cursor = None
+        try:
+            # Format the current day as a string
+            current_date_str = current_date.strftime('%Y-%m-%d')
+            logger.info(f"Scraping team data for date: {current_date_str}")
+            
+            # Scrape data for the day using nst_team_on_ice_scraper
+            # Set both startdate and enddate to the same value to ensure correct URL construction
+            team_stats_df = nst_team_on_ice_scraper(
+                startdate=current_date_str,
+                enddate=current_date_str,
+                sit=situation,
+                stype=stype
+            )
+            
+            # Add date information
+            team_stats_df['date'] = current_date.date()
+            
+            # Add season information for logging
+            year = current_date.year
+            month = current_date.month
+            season = f"{year-1}-{str(year)[2:]}" if month < 7 else f"{year}-{str(year+1)[2:]}"
+            team_stats_df['season'] = season
+            
+            # Log details about the returned DataFrame
+            logger.info(f"Team Stats DataFrame shape: {team_stats_df.shape}")
+            logger.info(f"Team Stats DataFrame columns: {team_stats_df.columns.tolist()}")
+            
+            # Connect to the database
+            conn = connect_db(db_prefix)
+            if conn is None:
+                raise Exception("Failed to establish database connection")
+            cursor = conn.cursor()
+            
+            # Insert (or update) the day's data with the appropriate table name
+            insert_team_stats_df(team_stats_df, conn, cursor, table_name)
+            
+            successful_scrapes += 1
+            logger.info(f"Successfully saved team data for {current_date_str}")
+        except Exception as e:
+            failed_scrapes += 1
+            logger.error(f"Error processing team data for {current_date_str}: {str(e)}")
+            if conn:
+                conn.rollback()
+        finally:
+            # Close the database cursor and connection
+            if cursor:
+                cursor.close()
+            if conn:
+                disconnect_db(conn)
+            
+            # If not processing the last date, wait a random delay
+            if current_date < end:
+                delay = random.uniform(delay_min, delay_max)
+                logger.info(f"Waiting {delay:.1f} seconds before next request...")
+                time.sleep(delay)
+            
+            # Move on to the next day
+            current_date += timedelta(days=1)
+    
+    # Log the final summary
+    logger.info(f"""
+    Team stats scraping completed:
     - Successful scrapes: {successful_scrapes}
     - Failed scrapes: {failed_scrapes}
     - Date range: {start_date} to {end_date}
