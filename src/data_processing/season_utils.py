@@ -53,6 +53,24 @@ def get_season_end_date(season, stype=2):
     else:
         raise ValueError(f"Invalid stype {stype}. Must be 2 for regular season or 3 for playoffs.")
 
+def get_season_start_date(season):
+    """
+    Get the start date for a season.
+    
+    Args:
+        season (int): Season in YYYYYYYY format
+        
+    Returns:
+        str: Start date in YYYY-MM-DD format
+        
+    Raises:
+        ValueError: If season is not found
+    """
+    if season not in NHL_SEASONS:
+        raise ValueError(f"Season {season} not found in NHL_SEASONS")
+    
+    return NHL_SEASONS[season]['start']
+
 def get_season_for_date(date_str):
     """
     Determines which NHL season a given date falls into.
