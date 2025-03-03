@@ -4,6 +4,7 @@ import random
 import time
 from typing import Optional
 from datetime import datetime, timedelta
+import unicodedata
 
 from src.db.base_utils import connect_db, disconnect_db
 from src.data_processing.nst_scraper import nst_on_ice_scraper, nst_team_on_ice_scraper
@@ -1418,6 +1419,7 @@ def add_home_away_data_from_nhl_api(
     else:
         # Create a dictionary for quick lookup of existing data
         existing_dates_teams = {(row[0], row[1]) for row in existing_data}
+        has_existing_data = True  # Flag to track if we have existing data
         logger.info(f"Found {len(existing_dates_teams)} team-date combinations in the database")
         
         # Log a sample of the data for debugging
@@ -1451,26 +1453,6 @@ def add_home_away_data_from_nhl_api(
             except Exception as e:
                 logger.warning(f"Error using direct schedule endpoint: {str(e)}")
             
-            # Method 2: If no games found, try using team_utils.get_week_schedule for a few teams
-            if not games_for_date:
-                # Try with a few common teams to ensure we get the schedule
-                test_teams = ['TOR', 'NYR', 'BOS', 'EDM']
-                for team in test_teams:
-                    try:
-                        team_schedule = get_week_schedule(team, current_date_str)
-                        if 'games' in team_schedule:
-                            # Find games for the current date
-                            for game in team_schedule['games']:
-                                game_date = game.get('gameDate', '').split('T')[0]
-                                if game_date == current_date_str and game not in games_for_date:
-                                    games_for_date.append(game)
-                        
-                        if games_for_date:
-                            logger.info(f"Found {len(games_for_date)} games using team_utils.get_week_schedule")
-                            break
-                    except Exception as e:
-                        logger.warning(f"Error getting schedule for team {team}: {str(e)}")
-            
             # Process the games we found
             for game in games_for_date:
                 # Extract home and away team information
@@ -1483,6 +1465,16 @@ def add_home_away_data_from_nhl_api(
                 
                 home_team = get_fullname_by_tricode(home_team)
                 away_team = get_fullname_by_tricode(away_team)
+
+                # Remove accent marks and punctuation from both team names
+                home_team = ''.join(
+                    c for c in unicodedata.normalize('NFD', home_team)
+                    if unicodedata.category(c) != 'Mn' and (c.isalnum() or c.isspace())
+                )
+                away_team = ''.join(
+                    c for c in unicodedata.normalize('NFD', away_team)
+                    if unicodedata.category(c) != 'Mn' and (c.isalnum() or c.isspace())
+                )
                 
                 # Also try the NST to NHL mapping as a fallback
                 if not home_team:
@@ -1493,14 +1485,10 @@ def add_home_away_data_from_nhl_api(
                     nst_away = away_team_data.get('abbrev', '')
                     away_team = nst_to_nhl_tricode(nst_away) or nst_away
                 
-                # Log the mapping for debugging
-                logger.info(f"Mapped home team: {home_team_data.get('abbrev', '')} -> {home_team}")
-                logger.info(f"Mapped away team: {away_team_data.get('abbrev', '')} -> {away_team}")
-                
                 game_date = current_date_str
                 
                 # Check if we have data for these teams on this date
-                if 'existing_dates_teams' in locals():
+                if has_existing_data:  # Replace locals() check with flag
                     # Try to find the team in the database - check for both the tricode and full name
                     home_exists = False
                     away_exists = False
@@ -1612,171 +1600,6 @@ def add_home_away_data_from_nhl_api(
         
         Try running check_available_dates() to see what data is available.
         """)
-
-def map_team_name_to_tricode(team_name: str) -> str:
-    """
-    Map team names from NHL API to standard tricodes used in the database.
-    
-    Args:
-        team_name: Team name or abbreviation from NHL API
-        
-    Returns:
-        Standard NHL tricode (e.g., 'TOR', 'NYR')
-    """
-    # Dictionary mapping various team name formats to standard tricodes
-    team_mapping = {
-        # Full names to tricodes
-        'Toronto Maple Leafs': 'TOR',
-        'Boston Bruins': 'BOS',
-        'Tampa Bay Lightning': 'TBL',
-        'Florida Panthers': 'FLA',
-        'Carolina Hurricanes': 'CAR',
-        'New York Rangers': 'NYR',
-        'New York Islanders': 'NYI',
-        'Washington Capitals': 'WSH',
-        'Pittsburgh Penguins': 'PIT',
-        'Philadelphia Flyers': 'PHI',
-        'New Jersey Devils': 'NJD',
-        'Columbus Blue Jackets': 'CBJ',
-        'Detroit Red Wings': 'DET',
-        'Buffalo Sabres': 'BUF',
-        'Montreal Canadiens': 'MTL',
-        'Ottawa Senators': 'OTT',
-        'Colorado Avalanche': 'COL',
-        'Dallas Stars': 'DAL',
-        'St. Louis Blues': 'STL',
-        'Minnesota Wild': 'MIN',
-        'Nashville Predators': 'NSH',
-        'Winnipeg Jets': 'WPG',
-        'Chicago Blackhawks': 'CHI',
-        'Arizona Coyotes': 'ARI',
-        'Vegas Golden Knights': 'VGK',
-        'Edmonton Oilers': 'EDM',
-        'Calgary Flames': 'CGY',
-        'Vancouver Canucks': 'VAN',
-        'Los Angeles Kings': 'LAK',
-        'San Jose Sharks': 'SJS',
-        'Anaheim Ducks': 'ANA',
-        'Seattle Kraken': 'SEA',
-        'Utah Hockey Club': 'UTA',
-        
-        # NHL API abbreviations (new format)
-        'TOR': 'TOR',
-        'BOS': 'BOS',
-        'TBL': 'TBL',
-        'FLA': 'FLA',
-        'CAR': 'CAR',
-        'NYR': 'NYR',
-        'NYI': 'NYI',
-        'WSH': 'WSH',
-        'PIT': 'PIT',
-        'PHI': 'PHI',
-        'NJD': 'NJD',
-        'CBJ': 'CBJ',
-        'DET': 'DET',
-        'BUF': 'BUF',
-        'MTL': 'MTL',
-        'OTT': 'OTT',
-        'COL': 'COL',
-        'DAL': 'DAL',
-        'STL': 'STL',
-        'MIN': 'MIN',
-        'NSH': 'NSH',
-        'WPG': 'WPG',
-        'CHI': 'CHI',
-        'ARI': 'ARI',
-        'VGK': 'VGK',
-        'EDM': 'EDM',
-        'CGY': 'CGY',
-        'VAN': 'VAN',
-        'LAK': 'LAK',
-        'SJS': 'SJS',
-        'ANA': 'ANA',
-        'SEA': 'SEA',
-        'UTA': 'UTA',
-        
-        # New API might use different abbreviations
-        'T.B': 'TBL',
-        'N.J': 'NJD',
-        'L.A': 'LAK',
-        'S.J': 'SJS',
-        
-        # Some common abbreviations that might differ
-        'Tampa Bay': 'TBL',
-        'Vegas': 'VGK',
-        'LA': 'LAK',
-        'SJ': 'SJS',
-        'NJ': 'NJD',
-        'TB': 'TBL',
-        
-        # Historical/renamed teams
-        'Phoenix Coyotes': 'ARI',
-        'Phoenix': 'ARI',
-        'PHX': 'ARI',
-        'Atlanta Thrashers': 'WPG',
-        'Atlanta': 'WPG',
-        'ATL': 'WPG',
-        'Mighty Ducks of Anaheim': 'ANA',
-        'Anaheim Mighty Ducks': 'ANA',
-        'Hartford Whalers': 'CAR',
-        'Hartford': 'CAR',
-        'HFD': 'CAR',
-        'Quebec Nordiques': 'COL',
-        'Quebec': 'COL',
-        'QUE': 'COL',
-        'Winnipeg Jets (1979)': 'ARI',
-        'Minnesota North Stars': 'DAL',
-        'MNS': 'DAL',
-        
-        # ID numbers from NHL API (as strings)
-        '1': 'NJD',    # New Jersey Devils
-        '2': 'NYI',    # New York Islanders
-        '3': 'NYR',    # New York Rangers
-        '4': 'PHI',    # Philadelphia Flyers
-        '5': 'PIT',    # Pittsburgh Penguins
-        '6': 'BOS',    # Boston Bruins
-        '7': 'BUF',    # Buffalo Sabres
-        '8': 'MTL',    # Montreal Canadiens
-        '9': 'OTT',    # Ottawa Senators
-        '10': 'TOR',   # Toronto Maple Leafs
-        '12': 'CAR',   # Carolina Hurricanes
-        '13': 'FLA',   # Florida Panthers
-        '14': 'TBL',   # Tampa Bay Lightning
-        '15': 'WSH',   # Washington Capitals
-        '16': 'CHI',   # Chicago Blackhawks
-        '17': 'DET',   # Detroit Red Wings
-        '18': 'NSH',   # Nashville Predators
-        '19': 'STL',   # St. Louis Blues
-        '20': 'CGY',   # Calgary Flames
-        '21': 'COL',   # Colorado Avalanche
-        '22': 'EDM',   # Edmonton Oilers
-        '23': 'VAN',   # Vancouver Canucks
-        '24': 'ANA',   # Anaheim Ducks
-        '25': 'DAL',   # Dallas Stars
-        '26': 'LAK',   # Los Angeles Kings
-        '28': 'SJS',   # San Jose Sharks
-        '29': 'CBJ',   # Columbus Blue Jackets
-        '30': 'MIN',   # Minnesota Wild
-        '52': 'WPG',   # Winnipeg Jets
-        '53': 'ARI',   # Arizona Coyotes
-        '54': 'VGK',   # Vegas Golden Knights
-        '55': 'SEA',   # Seattle Kraken
-        '56': 'UTA',   # Utah Hockey Club
-    }
-    
-    # If team_name is None or empty, return an empty string
-    if not team_name:
-        logger.warning("Empty team name provided to map_team_name_to_tricode")
-        return ""
-    
-    # Return the mapped tricode or the original if not found
-    result = team_mapping.get(team_name, team_name)
-    
-    # Log if we couldn't map the team name
-    if result not in team_mapping.values() and team_name not in team_mapping.values():
-        logger.warning(f"Could not map team name '{team_name}' to a standard tricode. Using '{result}' instead.")
-    
-    return result 
 
 def populate_and_update_home_away_data(
     start_date: str,
