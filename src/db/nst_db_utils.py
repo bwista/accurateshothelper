@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from src.db.base_utils import connect_db, disconnect_db
 from src.data_processing.nst_scraper import nst_on_ice_scraper, nst_team_on_ice_scraper
 from src.data_processing.season_utils import get_season_for_date, NHL_SEASONS, get_season_end_date
-from src.data_processing.team_utils import get_tricode_by_fullname
+from src.data_processing.team_utils import get_tricode_by_fullname, get_week_schedule, nst_to_nhl_tricode, get_fullname_by_tricode
 
 logger = logging.getLogger(__name__)
 
@@ -742,7 +742,8 @@ def get_team_stats(
     last_n: Optional[int] = None,
     db_prefix: str = "NST_DB_",
     situation: str = "all",
-    stype: int = 2
+    stype: int = 2,
+    side: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Retrieve team stats from the database with optional filters.
@@ -756,12 +757,13 @@ def get_team_stats(
     
     Args:
         team: Optional team name to filter by (NHL tricode)
-        start_date: Optional start date for date range in 'YYYY-MM-DD' format
-        end_date: Optional end date for date range in 'YYYY-MM-DD' format
+        start_date: Optional start date for date range
+        end_date: Optional end date for date range
         last_n: Optional number of days to look back from end_date, will span across seasons if needed
         db_prefix: Database environment variable prefix
         situation: The game situation to query ('all', '5v5', 'pk', or 'pp'). Determines which table to use.
         stype: Type of statistics to retrieve. Defaults to 2 for regular season.
+        side: Optional filter for home/away games ('home', 'away', or None for both)
     
     Returns:
         DataFrame containing team statistics, aggregated by team if last_n is provided
@@ -784,6 +786,11 @@ def get_team_stats(
     if team:
         conditions.append("team = %s")
         params.append(team)
+    
+    # Add side filter if provided
+    if side in ['home', 'away']:
+        conditions.append("side = %s")
+        params.append(side)
     
     # Handle date filtering with last_n logic
     if last_n is not None:
@@ -838,9 +845,9 @@ def get_team_stats(
     if end_date:
         conditions.append("date <= %s")
         params.append(end_date)
-    
+        
     where_clause = " AND ".join(conditions) if conditions else "1=1"
-    
+        
     conn = None
     try:
         conn = connect_db(db_prefix)
@@ -866,8 +873,8 @@ def get_team_stats(
             for col_name, data_type in column_info:
                 if col_name == 'team':
                     continue  # Skip team as it's our grouping column
-                elif col_name in ['date', 'last_updated', 'season']:
-                    # Skip date-related columns for aggregation
+                elif col_name in ['date', 'last_updated', 'season', 'side']:
+                    # Skip date-related columns and side for aggregation
                     continue
                 elif data_type in ['integer', 'numeric', 'real', 'double precision']:
                     numeric_columns.append(col_name)
@@ -932,24 +939,6 @@ def get_team_stats(
                         agg_expressions.append("ROUND(CASE WHEN SUM(sa) > 0 THEN ((SUM(sa) - SUM(ga)) * 100.0 / SUM(sa)) ELSE NULL END, 3) as sv_pct")
                     elif col == 'pdo':
                         agg_expressions.append("ROUND(CASE WHEN (SUM(sf) > 0 AND SUM(sa) > 0) THEN ((SUM(gf) * 100.0 / SUM(sf)) + ((SUM(sa) - SUM(ga)) * 100.0 / SUM(sa))) / 100.0 ELSE NULL END, 3) as pdo")
-                    elif col == 'scsh_pct':
-                        agg_expressions.append("ROUND(CASE WHEN SUM(scsf) > 0 THEN (SUM(scgf) * 100.0 / SUM(scsf)) ELSE NULL END, 3) as scsh_pct")
-                    elif col == 'scsv_pct':
-                        agg_expressions.append("ROUND(CASE WHEN SUM(scsa) > 0 THEN ((SUM(scsa) - SUM(scga)) * 100.0 / SUM(scsa)) ELSE NULL END, 3) as scsv_pct")
-                    elif col == 'hdsh_pct':
-                        agg_expressions.append("ROUND(CASE WHEN SUM(hdsf) > 0 THEN (SUM(hdgf) * 100.0 / SUM(hdsf)) ELSE NULL END, 3) as hdsh_pct")
-                    elif col == 'hdsv_pct':
-                        agg_expressions.append("ROUND(CASE WHEN SUM(hdsa) > 0 THEN ((SUM(hdsa) - SUM(hdga)) * 100.0 / SUM(hdsa)) ELSE NULL END, 3) as hdsv_pct")
-                    elif col == 'mdsh_pct':
-                        agg_expressions.append("ROUND(CASE WHEN SUM(mdsf) > 0 THEN (SUM(mdgf) * 100.0 / SUM(mdsf)) ELSE NULL END, 3) as mdsh_pct")
-                    elif col == 'mdsv_pct':
-                        agg_expressions.append("ROUND(CASE WHEN SUM(mdsa) > 0 THEN ((SUM(mdsa) - SUM(mdga)) * 100.0 / SUM(mdsa)) ELSE NULL END, 3) as mdsv_pct")
-                    elif col == 'ldsh_pct':
-                        agg_expressions.append("ROUND(CASE WHEN SUM(ldsf) > 0 THEN (SUM(ldgf) * 100.0 / SUM(ldsf)) ELSE NULL END, 3) as ldsh_pct")
-                    elif col == 'ldsv_pct':
-                        agg_expressions.append("ROUND(CASE WHEN SUM(ldsa) > 0 THEN ((SUM(ldsa) - SUM(ldga)) * 100.0 / SUM(ldsa)) ELSE NULL END, 3) as ldsv_pct")
-                    elif col == 'point_pct':
-                        agg_expressions.append("ROUND(CASE WHEN COUNT(DISTINCT date) > 0 THEN (SUM(points) * 1.0 / (COUNT(DISTINCT date) * 2)) ELSE NULL END, 3) as point_pct")
                     else:
                         # For other percentage columns, use AVG
                         agg_expressions.append(f"ROUND(AVG({col}), 3) as {col}")
@@ -968,6 +957,12 @@ def get_team_stats(
             agg_expressions.append("MAX(date) as last_game_date")
             agg_expressions.append("MAX(season) as season")
             
+            # Include side in the group by if it's being filtered
+            group_by = "team"
+            if side:
+                agg_expressions.append("side")
+                group_by = "team, side"
+            
             # Build the final query with aggregation
             query = f"""
                 SELECT 
@@ -975,7 +970,7 @@ def get_team_stats(
                     {', '.join(agg_expressions)}
                 FROM {table_name}
                 WHERE {where_clause}
-                GROUP BY team
+                GROUP BY {group_by}
                 ORDER BY SUM(points) DESC
             """
         else:
@@ -1006,4 +1001,930 @@ def get_team_stats(
     finally:
         if conn:
             cur.close()
-            disconnect_db(conn) 
+            disconnect_db(conn)
+
+def scrape_team_stats_home_away_range(
+    start_date: str,
+    end_date: str,
+    db_prefix: str = "NST_DB_",
+    delay_min: int = 3,
+    delay_max: int = 7,
+    situation: str = "all",
+    stype: int = 2
+) -> None:
+    """
+    Scrape team stats across a date range for both home and away games and save to the database.
+    
+    This function iterates through each day in the provided date range.
+    For each day, it calls the team scraper to retrieve home and away data separately,
+    then inserts that day's records into the database with a 'location' column to indicate
+    whether the stats are for home or away games.
+    
+    Args:
+        start_date: Start date in 'YYYY-MM-DD' format
+        end_date: End date in 'YYYY-MM-DD' format
+        db_prefix: Prefix for database environment variables
+        delay_min: Minimum delay between requests (seconds)
+        delay_max: Maximum delay between requests (seconds)
+        situation: The game situation to scrape ('all', '5v5', 'pk', or 'pp'). Determines which table to use.
+        stype: Type of statistics to retrieve. Defaults to 2 for regular season.
+    """
+    # Determine table name based on situation
+    if situation == "all":
+        table_name = "team_stats_all"
+    elif situation == "5v5":
+        table_name = "team_stats_5v5"
+    elif situation == "pk":
+        table_name = "team_stats_pk"
+    elif situation == "pp":
+        table_name = "team_stats_pp"
+    else:
+        raise ValueError(f"Invalid situation: {situation}. Must be one of: 'all', '5v5', 'pk', 'pp'")
+    
+    # Convert dates to datetime objects
+    start = datetime.strptime(start_date, '%Y-%m-%d')
+    end = datetime.strptime(end_date, '%Y-%m-%d')
+    
+    # Initialize counters for logging purposes
+    successful_home_scrapes = 0
+    failed_home_scrapes = 0
+    successful_away_scrapes = 0
+    failed_away_scrapes = 0
+    
+    current_date = start
+    while current_date <= end:
+        conn = None
+        cursor = None
+        try:
+            # Format the current day as a string
+            current_date_str = current_date.strftime('%Y-%m-%d')
+            logger.info(f"Scraping team home/away data for date: {current_date_str}")
+            
+            # Connect to the database
+            conn = connect_db(db_prefix)
+            if conn is None:
+                raise Exception("Failed to establish database connection")
+            cursor = conn.cursor()
+            
+            # Scrape HOME data for the day
+            logger.info(f"Scraping HOME team data for date: {current_date_str}")
+            home_stats_df = nst_team_on_ice_scraper(
+                startdate=current_date_str,
+                enddate=current_date_str,
+                sit=situation,
+                stype=stype,
+                loc='H'  # 'H' for home games
+            )
+            
+            # Add date information
+            home_stats_df['date'] = current_date.date()
+            
+            # Add season information for logging
+            year = current_date.year
+            month = current_date.month
+            season = f"{year-1}-{str(year)[2:]}" if month < 7 else f"{year}-{str(year+1)[2:]}"
+            home_stats_df['season'] = season
+            
+            # Add location column
+            home_stats_df['location'] = 'home'
+            
+            # Log details about the returned DataFrame
+            logger.info(f"Home Team Stats DataFrame shape: {home_stats_df.shape}")
+            
+            # Insert (or update) the home data
+            insert_team_stats_df(home_stats_df, conn, cursor, table_name)
+            
+            successful_home_scrapes += 1
+            logger.info(f"Successfully saved home team data for {current_date_str}")
+            
+            # Add a small delay between home and away requests
+            delay = random.uniform(delay_min/2, delay_max/2)
+            logger.info(f"Waiting {delay:.1f} seconds before away request...")
+            time.sleep(delay)
+            
+            # Scrape AWAY data for the day
+            logger.info(f"Scraping AWAY team data for date: {current_date_str}")
+            away_stats_df = nst_team_on_ice_scraper(
+                startdate=current_date_str,
+                enddate=current_date_str,
+                sit=situation,
+                stype=stype,
+                loc='A'  # 'A' for away games
+            )
+            
+            # Add date information
+            away_stats_df['date'] = current_date.date()
+            away_stats_df['season'] = season
+            
+            # Add location column
+            away_stats_df['location'] = 'away'
+            
+            # Log details about the returned DataFrame
+            logger.info(f"Away Team Stats DataFrame shape: {away_stats_df.shape}")
+            
+            # Insert (or update) the away data
+            insert_team_stats_df(away_stats_df, conn, cursor, table_name)
+            
+            successful_away_scrapes += 1
+            logger.info(f"Successfully saved away team data for {current_date_str}")
+            
+        except Exception as e:
+            if 'home_stats_df' not in locals():
+                failed_home_scrapes += 1
+                logger.error(f"Error processing home team data for {current_date_str}: {str(e)}")
+            if 'away_stats_df' not in locals():
+                failed_away_scrapes += 1
+                logger.error(f"Error processing away team data for {current_date_str}: {str(e)}")
+            if conn:
+                conn.rollback()
+        finally:
+            # Close the database cursor and connection
+            if cursor:
+                cursor.close()
+            if conn:
+                disconnect_db(conn)
+            
+            # If not processing the last date, wait a random delay
+            if current_date < end:
+                delay = random.uniform(delay_min, delay_max)
+                logger.info(f"Waiting {delay:.1f} seconds before next date...")
+                time.sleep(delay)
+            
+            # Move on to the next day
+            current_date += timedelta(days=1)
+    
+    # Log the final summary
+    logger.info(f"""
+    Team home/away stats scraping completed:
+    - Successful home scrapes: {successful_home_scrapes}
+    - Failed home scrapes: {failed_home_scrapes}
+    - Successful away scrapes: {successful_away_scrapes}
+    - Failed away scrapes: {failed_away_scrapes}
+    - Date range: {start_date} to {end_date}
+    - Table: {table_name}
+    """)
+
+def get_team_home_away_stats(
+    team: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    last_n: Optional[int] = None,
+    db_prefix: str = "NST_DB_",
+    situation: str = "all",
+    stype: int = 2,
+    location: str = "both"  # "both", "home", or "away"
+) -> pd.DataFrame:
+    """
+    Retrieve team statistics from the database for home or away games, or both.
+    
+    This function queries the team_stats tables for the specified situation and location,
+    applying filters for team, date range, and/or last N games.
+    
+    Args:
+        team: Team abbreviation to filter by (e.g., 'TOR')
+        start_date: Start date in 'YYYY-MM-DD' format
+        end_date: End date in 'YYYY-MM-DD' format
+        last_n: Number of most recent games to include
+        db_prefix: Database environment variable prefix
+        situation: The game situation to query ('all', '5v5', 'pk', or 'pp'). Determines which table to use.
+        stype: Type of statistics to retrieve. Defaults to 2 for regular season.
+        location: Location filter - 'both' for both home and away, 'home' for home only, 'away' for away only.
+    
+    Returns:
+        DataFrame containing team statistics, aggregated by team if last_n is provided
+    """
+    # Determine table names based on situation and location
+    if situation == "all":
+        base_table = "team_stats_all"
+    elif situation == "5v5":
+        base_table = "team_stats_5v5"
+    elif situation == "pk":
+        base_table = "team_stats_pk"
+    elif situation == "pp":
+        base_table = "team_stats_pp"
+    else:
+        raise ValueError(f"Invalid situation: {situation}. Must be one of: 'all', '5v5', 'pk', 'pp'")
+    
+    # Determine which tables to query based on location
+    if location == "home":
+        tables = [f"{base_table}_h"]
+    elif location == "away":
+        tables = [f"{base_table}_a"]
+    elif location == "both":
+        tables = [f"{base_table}_h", f"{base_table}_a"]
+    else:
+        raise ValueError(f"Invalid location: {location}. Must be one of: 'both', 'home', 'away'")
+    
+    # Initialize an empty list to store DataFrames from each table
+    dfs = []
+    
+    for table_name in tables:
+        conditions = []
+        params = []
+        
+        if team:
+            conditions.append("team = %s")
+            params.append(team)
+        
+        # Add location filter if provided
+        if location in ['home', 'away']:
+            conditions.append("location = %s")
+            params.append(location)
+        
+        # Handle date filtering with last_n logic
+        if last_n is not None:
+            if end_date is None:
+                # If no end_date provided, use current date
+                end_date = datetime.now().strftime('%Y-%m-%d')
+                
+            try:
+                # Calculate start_date based on last_n days with season spanning logic
+                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
+                end_season = get_season_for_date(end_date)
+                
+                if end_season in NHL_SEASONS:
+                    season_start_obj = datetime.strptime(NHL_SEASONS[end_season]['start'], '%Y-%m-%d')
+                    
+                    # If end_date is before season start, adjust to season start
+                    if end_date_obj < season_start_obj:
+                        end_date_obj = season_start_obj
+                        end_date = end_date_obj.strftime('%Y-%m-%d')
+                
+                # Add end_date condition
+                conditions.append("date <= %s")
+                params.append(end_date)
+                
+                # For last_n, we'll handle this by ordering and limiting in the query
+                # rather than calculating a start date
+            except ValueError as e:
+                logger.error(f"Error calculating date range: {str(e)}")
+                raise
+        else:
+            # Standard date range filtering
+            if start_date:
+                conditions.append("date >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("date <= %s")
+                params.append(end_date)
+        
+        # Build the WHERE clause
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        
+        # Build the query
+        if last_n is not None:
+            # For last_n, we need to order by date and limit
+            query = f"""
+            SELECT * FROM {table_name}
+            WHERE {where_clause}
+            ORDER BY date DESC
+            LIMIT {last_n}
+            """
+        else:
+            query = f"""
+            SELECT * FROM {table_name}
+            WHERE {where_clause}
+            ORDER BY date
+            """
+        
+        # Connect to the database and execute the query
+        conn = connect_db(db_prefix)
+        if conn is None:
+            raise Exception(f"Failed to connect to database with prefix {db_prefix}")
+        
+        try:
+            # Add a location column to identify the source table
+            location_label = "home" if "_h" in table_name else "away"
+            
+            # Execute the query and fetch the results
+            df = pd.read_sql_query(query, conn, params=params)
+            
+            # Add a location column
+            df['location'] = location_label
+            
+            # Append to the list of DataFrames
+            if not df.empty:
+                dfs.append(df)
+        except Exception as e:
+            logger.error(f"Error querying {table_name}: {str(e)}")
+            raise
+        finally:
+            disconnect_db(conn)
+    
+    # Combine the DataFrames
+    if not dfs:
+        # Return an empty DataFrame with the expected columns
+        return pd.DataFrame()
+    
+    # Concatenate all DataFrames
+    result_df = pd.concat(dfs, ignore_index=True)
+    
+    # Sort by date
+    result_df = result_df.sort_values('date')
+    
+    return result_df 
+
+def add_home_away_data_from_nhl_api(
+    start_date: str,
+    end_date: str,
+    db_prefix: str = "NST_DB_",
+    table_name: str = "team_stats_all",
+    delay_min: int = 1,
+    delay_max: int = 3
+) -> None:
+    """
+    Fetch home/away data from NHL API for a date range and update existing team stats tables.
+    
+    This function:
+    1. Queries the NHL API for games in the specified date range
+    2. Extracts home/away information for each team
+    3. Updates the existing team stats tables with a 'side' column
+    
+    Args:
+        start_date: Start date in 'YYYY-MM-DD' format
+        end_date: End date in 'YYYY-MM-DD' format
+        db_prefix: Prefix for database environment variables
+        table_name: The table to update (e.g., 'team_stats_all', 'team_stats_5v5')
+        delay_min: Minimum delay between API requests (seconds)
+        delay_max: Maximum delay between API requests (seconds)
+    """
+    import requests
+    from datetime import datetime, timedelta
+    import time
+    import random
+    from src.data_processing.team_utils import get_week_schedule, get_tricode_by_fullname, nst_to_nhl_tricode
+    
+    # Convert dates to datetime objects
+    start = datetime.strptime(start_date, '%Y-%m-%d')
+    end = datetime.strptime(end_date, '%Y-%m-%d')
+    
+    # Initialize counters for logging
+    games_processed = 0
+    teams_updated = 0
+    
+    # Connect to the database
+    conn = connect_db(db_prefix)
+    if conn is None:
+        raise Exception("Failed to establish database connection")
+    
+    cursor = conn.cursor()
+    
+    # Check if side column exists, add it if it doesn't
+    # Use a separate connection for this check to avoid transaction issues
+    check_conn = None
+    check_cursor = None
+    try:
+        check_conn = connect_db(db_prefix)
+        check_cursor = check_conn.cursor()
+        
+        # Check if the column exists using information_schema
+        check_cursor.execute(
+            """
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = %s AND column_name = 'side'
+            """, 
+            (table_name,)
+        )
+        
+        column_exists = check_cursor.fetchone() is not None
+        
+        if not column_exists:
+            logger.info(f"Adding side column to {table_name}")
+            check_cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN side VARCHAR(10)")
+            check_conn.commit()
+            logger.info(f"Successfully added side column to {table_name}")
+    except Exception as e:
+        logger.error(f"Error checking/adding side column: {str(e)}")
+        if check_conn:
+            check_conn.rollback()
+        raise
+    finally:
+        if check_cursor:
+            check_cursor.close()
+        if check_conn:
+            disconnect_db(check_conn)
+    
+    # First, check if we have data for the date range
+    cursor.execute(
+        f"SELECT DISTINCT date::text, team FROM {table_name} WHERE date BETWEEN %s AND %s",
+        (start_date, end_date)
+    )
+    existing_data = cursor.fetchall()
+    
+    if not existing_data:
+        logger.warning(f"No team stats data found in {table_name} for date range {start_date} to {end_date}")
+        logger.info("You may need to run scrape_team_stats_range() first to populate the data")
+    else:
+        # Create a dictionary for quick lookup of existing data
+        existing_dates_teams = {(row[0], row[1]) for row in existing_data}
+        logger.info(f"Found {len(existing_dates_teams)} team-date combinations in the database")
+        
+        # Log a sample of the data for debugging
+        sample_data = list(existing_dates_teams)[:5]
+        logger.info(f"Sample data (date, team): {sample_data}")
+    
+    # Process each day in the date range
+    current_date = start
+    while current_date <= end:
+        current_date_str = current_date.strftime('%Y-%m-%d')
+        logger.info(f"Processing games for date: {current_date_str}")
+        
+        try:
+            # Try to get schedule data using multiple methods
+            schedule_data = None
+            games_for_date = []
+            
+            # Method 1: Try using the direct schedule endpoint
+            try:
+                url = f"https://api-web.nhle.com/v1/schedule/{current_date_str}"
+                response = requests.get(url)
+                response.raise_for_status()
+                schedule_data = response.json()
+                
+                # Extract games for the current date
+                if 'gameWeek' in schedule_data and schedule_data['gameWeek']:
+                    for day_data in schedule_data['gameWeek']:
+                        if day_data.get('date') == current_date_str and 'games' in day_data:
+                            games_for_date = day_data['games']
+                            logger.info(f"Found {len(games_for_date)} games using direct schedule endpoint")
+            except Exception as e:
+                logger.warning(f"Error using direct schedule endpoint: {str(e)}")
+            
+            # Method 2: If no games found, try using team_utils.get_week_schedule for a few teams
+            if not games_for_date:
+                # Try with a few common teams to ensure we get the schedule
+                test_teams = ['TOR', 'NYR', 'BOS', 'EDM']
+                for team in test_teams:
+                    try:
+                        team_schedule = get_week_schedule(team, current_date_str)
+                        if 'games' in team_schedule:
+                            # Find games for the current date
+                            for game in team_schedule['games']:
+                                game_date = game.get('gameDate', '').split('T')[0]
+                                if game_date == current_date_str and game not in games_for_date:
+                                    games_for_date.append(game)
+                        
+                        if games_for_date:
+                            logger.info(f"Found {len(games_for_date)} games using team_utils.get_week_schedule")
+                            break
+                    except Exception as e:
+                        logger.warning(f"Error getting schedule for team {team}: {str(e)}")
+            
+            # Process the games we found
+            for game in games_for_date:
+                # Extract home and away team information
+                home_team_data = game.get('homeTeam', {})
+                away_team_data = game.get('awayTeam', {})
+                
+                # Get team abbreviations - try different fields that might be available
+                home_team = home_team_data.get('abbrev', home_team_data.get('triCode', ''))
+                away_team = away_team_data.get('abbrev', away_team_data.get('triCode', ''))
+                
+                home_team = get_fullname_by_tricode(home_team)
+                away_team = get_fullname_by_tricode(away_team)
+                
+                # Also try the NST to NHL mapping as a fallback
+                if not home_team:
+                    nst_home = home_team_data.get('abbrev', '')
+                    home_team = nst_to_nhl_tricode(nst_home) or nst_home
+                
+                if not away_team:
+                    nst_away = away_team_data.get('abbrev', '')
+                    away_team = nst_to_nhl_tricode(nst_away) or nst_away
+                
+                # Log the mapping for debugging
+                logger.info(f"Mapped home team: {home_team_data.get('abbrev', '')} -> {home_team}")
+                logger.info(f"Mapped away team: {away_team_data.get('abbrev', '')} -> {away_team}")
+                
+                game_date = current_date_str
+                
+                # Check if we have data for these teams on this date
+                if 'existing_dates_teams' in locals():
+                    # Try to find the team in the database - check for both the tricode and full name
+                    home_exists = False
+                    away_exists = False
+                    
+                    # Check for exact match
+                    home_exists = (game_date, home_team) in existing_dates_teams
+                    away_exists = (game_date, away_team) in existing_dates_teams
+                    
+                    # If not found, try to find by full team name
+                    if not home_exists:
+                        # Try to find the full team name in the database
+                        home_full_name = f"{home_team} {home_team_data.get('teamName', '')}"
+                        for date_team in existing_dates_teams:
+                            if date_team[0] == game_date and home_team in date_team[1]:
+                                home_exists = True
+                                home_team = date_team[1]  # Use the exact team name from the database
+                                logger.info(f"Found home team in database as: {home_team}")
+                                break
+                    
+                    if not away_exists:
+                        # Try to find the full team name in the database
+                        away_full_name = f"{away_team} {away_team_data.get('teamName', '')}"
+                        for date_team in existing_dates_teams:
+                            if date_team[0] == game_date and away_team in date_team[1]:
+                                away_exists = True
+                                away_team = date_team[1]  # Use the exact team name from the database
+                                logger.info(f"Found away team in database as: {away_team}")
+                                break
+                    
+                    if not home_exists:
+                        logger.warning(f"No data found for home team {home_team} on {game_date}")
+                    if not away_exists:
+                        logger.warning(f"No data found for away team {away_team} on {game_date}")
+                
+                # Update home team record
+                cursor.execute(
+                    f"UPDATE {table_name} SET side = 'home' WHERE team = %s AND date = %s",
+                    (home_team, game_date)
+                )
+                home_updated = cursor.rowcount
+                
+                # If no rows were updated, try with a more flexible query
+                if home_updated == 0:
+                    cursor.execute(
+                        f"UPDATE {table_name} SET side = 'home' WHERE team LIKE %s AND date = %s",
+                        (f"%{home_team}%", game_date)
+                    )
+                    home_updated = cursor.rowcount
+                    if home_updated > 0:
+                        logger.info(f"Updated home team using LIKE query: {home_team}")
+                
+                # Update away team record
+                cursor.execute(
+                    f"UPDATE {table_name} SET side = 'away' WHERE team = %s AND date = %s",
+                    (away_team, game_date)
+                )
+                away_updated = cursor.rowcount
+                
+                # If no rows were updated, try with a more flexible query
+                if away_updated == 0:
+                    cursor.execute(
+                        f"UPDATE {table_name} SET side = 'away' WHERE team LIKE %s AND date = %s",
+                        (f"%{away_team}%", game_date)
+                    )
+                    away_updated = cursor.rowcount
+                    if away_updated > 0:
+                        logger.info(f"Updated away team using LIKE query: {away_team}")
+                
+                teams_updated += home_updated + away_updated
+                games_processed += 1
+                
+                logger.info(f"Game: {away_team} @ {home_team} on {game_date} - Updated {home_updated + away_updated} records")
+            
+            # Commit changes for this day
+            conn.commit()
+            
+        except Exception as e:
+            logger.error(f"Error processing games for {current_date_str}: {str(e)}")
+            conn.rollback()
+        
+        # Add delay before next request
+        if current_date < end:
+            delay = random.uniform(delay_min, delay_max)
+            logger.info(f"Waiting {delay:.1f} seconds before next request...")
+            time.sleep(delay)
+        
+        # Move to next day
+        current_date += timedelta(days=1)
+    
+    # Close database connection
+    cursor.close()
+    disconnect_db(conn)
+    
+    # Log summary
+    logger.info(f"""
+    Home/away data update completed:
+    - Date range: {start_date} to {end_date}
+    - Games processed: {games_processed}
+    - Team records updated: {teams_updated}
+    - Table: {table_name}
+    """)
+    
+    if teams_updated == 0:
+        logger.warning("""
+        No team records were updated. This could be due to:
+        1. No team stats data exists for the specified date range
+        2. Team name mapping issues between NHL API and database
+        3. The data may already have 'side' values set
+        
+        Try running check_available_dates() to see what data is available.
+        """)
+
+def map_team_name_to_tricode(team_name: str) -> str:
+    """
+    Map team names from NHL API to standard tricodes used in the database.
+    
+    Args:
+        team_name: Team name or abbreviation from NHL API
+        
+    Returns:
+        Standard NHL tricode (e.g., 'TOR', 'NYR')
+    """
+    # Dictionary mapping various team name formats to standard tricodes
+    team_mapping = {
+        # Full names to tricodes
+        'Toronto Maple Leafs': 'TOR',
+        'Boston Bruins': 'BOS',
+        'Tampa Bay Lightning': 'TBL',
+        'Florida Panthers': 'FLA',
+        'Carolina Hurricanes': 'CAR',
+        'New York Rangers': 'NYR',
+        'New York Islanders': 'NYI',
+        'Washington Capitals': 'WSH',
+        'Pittsburgh Penguins': 'PIT',
+        'Philadelphia Flyers': 'PHI',
+        'New Jersey Devils': 'NJD',
+        'Columbus Blue Jackets': 'CBJ',
+        'Detroit Red Wings': 'DET',
+        'Buffalo Sabres': 'BUF',
+        'Montreal Canadiens': 'MTL',
+        'Ottawa Senators': 'OTT',
+        'Colorado Avalanche': 'COL',
+        'Dallas Stars': 'DAL',
+        'St. Louis Blues': 'STL',
+        'Minnesota Wild': 'MIN',
+        'Nashville Predators': 'NSH',
+        'Winnipeg Jets': 'WPG',
+        'Chicago Blackhawks': 'CHI',
+        'Arizona Coyotes': 'ARI',
+        'Vegas Golden Knights': 'VGK',
+        'Edmonton Oilers': 'EDM',
+        'Calgary Flames': 'CGY',
+        'Vancouver Canucks': 'VAN',
+        'Los Angeles Kings': 'LAK',
+        'San Jose Sharks': 'SJS',
+        'Anaheim Ducks': 'ANA',
+        'Seattle Kraken': 'SEA',
+        'Utah Hockey Club': 'UTA',
+        
+        # NHL API abbreviations (new format)
+        'TOR': 'TOR',
+        'BOS': 'BOS',
+        'TBL': 'TBL',
+        'FLA': 'FLA',
+        'CAR': 'CAR',
+        'NYR': 'NYR',
+        'NYI': 'NYI',
+        'WSH': 'WSH',
+        'PIT': 'PIT',
+        'PHI': 'PHI',
+        'NJD': 'NJD',
+        'CBJ': 'CBJ',
+        'DET': 'DET',
+        'BUF': 'BUF',
+        'MTL': 'MTL',
+        'OTT': 'OTT',
+        'COL': 'COL',
+        'DAL': 'DAL',
+        'STL': 'STL',
+        'MIN': 'MIN',
+        'NSH': 'NSH',
+        'WPG': 'WPG',
+        'CHI': 'CHI',
+        'ARI': 'ARI',
+        'VGK': 'VGK',
+        'EDM': 'EDM',
+        'CGY': 'CGY',
+        'VAN': 'VAN',
+        'LAK': 'LAK',
+        'SJS': 'SJS',
+        'ANA': 'ANA',
+        'SEA': 'SEA',
+        'UTA': 'UTA',
+        
+        # New API might use different abbreviations
+        'T.B': 'TBL',
+        'N.J': 'NJD',
+        'L.A': 'LAK',
+        'S.J': 'SJS',
+        
+        # Some common abbreviations that might differ
+        'Tampa Bay': 'TBL',
+        'Vegas': 'VGK',
+        'LA': 'LAK',
+        'SJ': 'SJS',
+        'NJ': 'NJD',
+        'TB': 'TBL',
+        
+        # Historical/renamed teams
+        'Phoenix Coyotes': 'ARI',
+        'Phoenix': 'ARI',
+        'PHX': 'ARI',
+        'Atlanta Thrashers': 'WPG',
+        'Atlanta': 'WPG',
+        'ATL': 'WPG',
+        'Mighty Ducks of Anaheim': 'ANA',
+        'Anaheim Mighty Ducks': 'ANA',
+        'Hartford Whalers': 'CAR',
+        'Hartford': 'CAR',
+        'HFD': 'CAR',
+        'Quebec Nordiques': 'COL',
+        'Quebec': 'COL',
+        'QUE': 'COL',
+        'Winnipeg Jets (1979)': 'ARI',
+        'Minnesota North Stars': 'DAL',
+        'MNS': 'DAL',
+        
+        # ID numbers from NHL API (as strings)
+        '1': 'NJD',    # New Jersey Devils
+        '2': 'NYI',    # New York Islanders
+        '3': 'NYR',    # New York Rangers
+        '4': 'PHI',    # Philadelphia Flyers
+        '5': 'PIT',    # Pittsburgh Penguins
+        '6': 'BOS',    # Boston Bruins
+        '7': 'BUF',    # Buffalo Sabres
+        '8': 'MTL',    # Montreal Canadiens
+        '9': 'OTT',    # Ottawa Senators
+        '10': 'TOR',   # Toronto Maple Leafs
+        '12': 'CAR',   # Carolina Hurricanes
+        '13': 'FLA',   # Florida Panthers
+        '14': 'TBL',   # Tampa Bay Lightning
+        '15': 'WSH',   # Washington Capitals
+        '16': 'CHI',   # Chicago Blackhawks
+        '17': 'DET',   # Detroit Red Wings
+        '18': 'NSH',   # Nashville Predators
+        '19': 'STL',   # St. Louis Blues
+        '20': 'CGY',   # Calgary Flames
+        '21': 'COL',   # Colorado Avalanche
+        '22': 'EDM',   # Edmonton Oilers
+        '23': 'VAN',   # Vancouver Canucks
+        '24': 'ANA',   # Anaheim Ducks
+        '25': 'DAL',   # Dallas Stars
+        '26': 'LAK',   # Los Angeles Kings
+        '28': 'SJS',   # San Jose Sharks
+        '29': 'CBJ',   # Columbus Blue Jackets
+        '30': 'MIN',   # Minnesota Wild
+        '52': 'WPG',   # Winnipeg Jets
+        '53': 'ARI',   # Arizona Coyotes
+        '54': 'VGK',   # Vegas Golden Knights
+        '55': 'SEA',   # Seattle Kraken
+        '56': 'UTA',   # Utah Hockey Club
+    }
+    
+    # If team_name is None or empty, return an empty string
+    if not team_name:
+        logger.warning("Empty team name provided to map_team_name_to_tricode")
+        return ""
+    
+    # Return the mapped tricode or the original if not found
+    result = team_mapping.get(team_name, team_name)
+    
+    # Log if we couldn't map the team name
+    if result not in team_mapping.values() and team_name not in team_mapping.values():
+        logger.warning(f"Could not map team name '{team_name}' to a standard tricode. Using '{result}' instead.")
+    
+    return result 
+
+def populate_and_update_home_away_data(
+    start_date: str,
+    end_date: str,
+    db_prefix: str = "NST_DB_",
+    situation: str = "all",
+    stype: int = 2,
+    delay_min: int = 3,
+    delay_max: int = 7
+) -> None:
+    """
+    Populate team stats data and add home/away information in one step.
+    
+    This function:
+    1. Scrapes team stats data for the specified date range
+    2. Adds home/away information from the NHL API
+    
+    Args:
+        start_date: Start date in 'YYYY-MM-DD' format
+        end_date: End date in 'YYYY-MM-DD' format
+        db_prefix: Prefix for database environment variables
+        situation: The game situation to scrape ('all', '5v5', 'pk', or 'pp')
+        stype: Type of statistics to retrieve. Defaults to 2 for regular season.
+        delay_min: Minimum delay between requests (seconds)
+        delay_max: Maximum delay between requests (seconds)
+    """
+    # Determine table name based on situation
+    if situation == "all":
+        table_name = "team_stats_all"
+    elif situation == "5v5":
+        table_name = "team_stats_5v5"
+    elif situation == "pk":
+        table_name = "team_stats_pk"
+    elif situation == "pp":
+        table_name = "team_stats_pp"
+    else:
+        raise ValueError(f"Invalid situation: {situation}. Must be one of: 'all', '5v5', 'pk', 'pp'")
+    
+    # Step 1: Scrape team stats data
+    logger.info(f"Step 1: Scraping team stats data for {start_date} to {end_date}")
+    scrape_team_stats_range(
+        start_date=start_date,
+        end_date=end_date,
+        db_prefix=db_prefix,
+        delay_min=delay_min,
+        delay_max=delay_max,
+        situation=situation,
+        stype=stype
+    )
+    
+    # Step 2: Add home/away information
+    logger.info(f"Step 2: Adding home/away information for {start_date} to {end_date}")
+    add_home_away_data_from_nhl_api(
+        start_date=start_date,
+        end_date=end_date,
+        db_prefix=db_prefix,
+        table_name=table_name,
+        delay_min=1,  # Use shorter delays for API calls
+        delay_max=3
+    )
+    
+    logger.info(f"Completed populating and updating home/away data for {start_date} to {end_date}")
+
+def check_available_dates(
+    table_name: str = "team_stats_all",
+    db_prefix: str = "NST_DB_"
+) -> pd.DataFrame:
+    """
+    Check what dates are available in the database for a specific table.
+    
+    This function is useful for troubleshooting when adding home/away data.
+    
+    Args:
+        table_name: The table to check (e.g., 'team_stats_all', 'team_stats_5v5')
+        db_prefix: Prefix for database environment variables
+        
+    Returns:
+        DataFrame with date counts and team counts per date
+    """
+    # Connect to the database
+    conn = connect_db(db_prefix)
+    if conn is None:
+        raise Exception("Failed to establish database connection")
+    
+    cursor = conn.cursor()
+    
+    try:
+        # Get date counts
+        cursor.execute(
+            f"""
+            SELECT 
+                date, 
+                COUNT(DISTINCT team) as team_count,
+                STRING_AGG(DISTINCT team, ', ' ORDER BY team) as teams,
+                COUNT(*) as record_count
+            FROM {table_name}
+            GROUP BY date
+            ORDER BY date DESC
+            LIMIT 100
+            """
+        )
+        
+        # Convert to DataFrame
+        columns = [desc[0] for desc in cursor.description]
+        results = cursor.fetchall()
+        
+        df = pd.DataFrame(results, columns=columns)
+        
+        # Check if side column exists
+        cursor.execute(
+            f"""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = %s AND column_name = 'side'
+            """, 
+            (table_name,)
+        )
+        
+        side_column_exists = cursor.fetchone() is not None
+        
+        if side_column_exists:
+            # Get counts of records with side values
+            cursor.execute(
+                f"""
+                SELECT 
+                    date,
+                    COUNT(CASE WHEN side = 'home' THEN 1 END) as home_count,
+                    COUNT(CASE WHEN side = 'away' THEN 1 END) as away_count,
+                    COUNT(CASE WHEN side IS NULL THEN 1 END) as null_count
+                FROM {table_name}
+                GROUP BY date
+                ORDER BY date DESC
+                LIMIT 100
+                """
+            )
+            
+            # Convert to DataFrame
+            side_columns = [desc[0] for desc in cursor.description]
+            side_results = cursor.fetchall()
+            
+            side_df = pd.DataFrame(side_results, columns=side_columns)
+            
+            # Merge the two DataFrames
+            if not side_df.empty:
+                df = pd.merge(df, side_df, on='date', how='left')
+        
+        return df
+        
+    finally:
+        cursor.close()
+        disconnect_db(conn)

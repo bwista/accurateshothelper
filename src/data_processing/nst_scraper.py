@@ -189,7 +189,7 @@ def nst_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=N
     except Exception as err:
         print(f"An error occurred: {err}")  # Other errors
         
-def nst_team_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=None, last_n=None, stype=2, sit='all'):
+def nst_team_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=None, last_n=None, stype=2, sit='all', loc='B'):
     """
     Extracts team on-ice statistics from Natural Stat Trick for specified seasons and filtering conditions.
 
@@ -201,6 +201,7 @@ def nst_team_on_ice_scraper(fromseason=None, thruseason=None, startdate='', endd
         last_n (int, optional): Number of days to look back from enddate. If provided, overrides startdate.
         stype (int, optional): Type of statistics to retrieve. Defaults to 2 for regular season.
         sit (str, optional): Situation type to filter by (e.g., 'all'). Defaults to 'all'.
+        loc (str, optional): Location filter - 'B' for both home and away, 'H' for home only, 'A' for away only. Defaults to 'B'.
 
     Returns:
         DataFrame: A DataFrame containing the team on-ice statistics.
@@ -288,7 +289,7 @@ def nst_team_on_ice_scraper(fromseason=None, thruseason=None, startdate='', endd
     url = (
         f"https://www.naturalstattrick.com/teamtable.php?"
         f"fromseason={fromseason}&thruseason={thruseason}&stype={stype}&sit={sit}"
-        f"&score=all&rate=n&team=all&loc=B"
+        f"&score=all&rate=n&team=all&loc={loc}"
         f"&gpfilt=gpdate&fd={startdate}&td={enddate}"
         f"&tgp=410"
     )
