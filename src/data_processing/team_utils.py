@@ -120,7 +120,7 @@ def nst_to_nhl_tricode(nst_abbreviation: str) -> Optional[str]:
         'OTT': 'OTT', 'STL': 'STL', 'T.B': 'TBL', 'BOS': 'BOS', 'TOR': 'TOR',
         'WPG': 'WPG', 'PIT': 'PIT', 'VAN': 'VAN', 'S.J': 'SJS', 'CBJ': 'CBJ',
         'CGY': 'CGY', 'MTL': 'MTL', 'VGK': 'VGK', 'UTA': 'UTA', 'PHI': 'PHI',
-        'DAL': 'DAL', 'WSH': 'WSH'
+        'DAL': 'DAL', 'WSH': 'WSH', 'ARI': 'ARI'
     }
 
     return nst_to_nhl_map.get(nst_abbreviation)

@@ -2,6 +2,7 @@ import pandas as pd
 import requests
 from io import StringIO
 from datetime import datetime, timedelta
+import logging
 
 from src.data_processing.team_utils import nst_to_nhl_tricode
 from src.data_processing.season_utils import get_season_for_date, NHL_SEASONS, get_season_end_date
@@ -25,13 +26,13 @@ def nst_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=N
         lines (str, optional): Whether to split or combine results for multi-team players. Use 'multi' for split and 'single' for combined. Defaults to 'multi'.
 
     Returns:
-        df: A DataFrame containing the player on-ice statistics.
+        df: A DataFrame containing the player on-ice statistics, or None if an error occurs.
 
     Raises:
         ValueError: If `stdoi` or `pos` or `loc` has an invalid value, or if enddate is not provided.
-        requests.exceptions.HTTPError: If the HTTP request returned an unsuccessful status code.
-        Exception: For any other errors that occur during the scraping process.
     """
+    logger = logging.getLogger(__name__)
+    
     if stdoi not in ['std', 'oi', 'g']:
         raise ValueError("stdoi must be either 'std' for individual stats, 'oi' for on-ice stats, or 'g' for goalies.")
     if pos not in ['S', 'G']:
@@ -125,6 +126,8 @@ def nst_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=N
         f"&gpfilt=gpdate&fd={startdate}&td={enddate}"
         f"&tgp=410&lines={lines}&draftteam=ALL"
     )
+    
+    logger.info(f"NST Scraper URL: {url}")
 
     # Add browser-like headers
     headers = {
@@ -179,16 +182,20 @@ def nst_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=N
             for col in toi_columns:
                 # Convert time format (MM:SS) to decimal minutes
                 df[col] = df[col].apply(lambda x: float(x.split(':')[0]) + float(x.split(':')[1])/60 if ':' in str(x) else x).round(2)
-                
+            
+            logger.info(f"Successfully scraped data: {df.shape[0]} rows, {df.shape[1]} columns")
             return df
         else:
-            print("No tables found on the webpage.")
+            logger.warning("No tables found on the webpage.")
+            return None
 
     except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred: {http_err}")  # HTTP error
+        logger.error(f"HTTP error occurred: {http_err}")  # HTTP error
+        return None
     except Exception as err:
-        print(f"An error occurred: {err}")  # Other errors
-        
+        logger.error(f"An error occurred: {err}")  # Other errors
+        return None
+
 def nst_team_on_ice_scraper(fromseason=None, thruseason=None, startdate='', enddate=None, last_n=None, stype=2, sit='all', loc='B'):
     """
     Extracts team on-ice statistics from Natural Stat Trick for specified seasons and filtering conditions.

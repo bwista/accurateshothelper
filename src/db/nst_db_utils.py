@@ -451,6 +451,14 @@ def scrape_goalie_stats_range(
     start = datetime.strptime(start_date, '%Y-%m-%d')
     end = datetime.strptime(end_date, '%Y-%m-%d')
     
+    # Get seasons for start and end dates
+    try:
+        start_season = get_season_for_date(start_date)
+        end_season = get_season_for_date(end_date)
+    except ValueError as e:
+        logger.error(f"Error determining seasons: {e}")
+        raise
+    
     # Initialize counters for logging purposes
     successful_scrapes = 0
     failed_scrapes = 0
@@ -464,8 +472,23 @@ def scrape_goalie_stats_range(
             current_date_str = current_date.strftime('%Y-%m-%d')
             logger.info(f"Scraping data for date: {current_date_str}")
             
+            # Get the season for the current date
+            current_season = get_season_for_date(current_date_str)
+            
+            # Log the URL that will be used for scraping
+            scrape_url = (
+                f"https://www.naturalstattrick.com/playerteams.php?"
+                f"fromseason={current_season}&thruseason={current_season}&stype=2&sit={situation}"
+                f"&score=all&stdoi=g&rate=n&team=ALL&pos=S&loc=B&toi=0"
+                f"&gpfilt=gpdate&fd={current_date_str}&td={current_date_str}"
+                f"&tgp=410&lines=single&draftteam=ALL"
+            )
+            logger.info(f"Scraping URL: {scrape_url}")
+            
             # Scrape data for the day
             goalie_stats_df = nst_on_ice_scraper(
+                fromseason=current_season,
+                thruseason=current_season,
                 startdate=current_date_str,
                 enddate=current_date_str,
                 sit=situation,
@@ -474,6 +497,17 @@ def scrape_goalie_stats_range(
                 stdoi='g',
                 lines='single'
             )
+            
+            # Check if the DataFrame is empty or None
+            if goalie_stats_df is None:
+                logger.warning(f"No data returned from scraper for {current_date_str}")
+                failed_scrapes += 1
+                continue
+                
+            if goalie_stats_df.empty:
+                logger.warning(f"Empty DataFrame returned from scraper for {current_date_str}")
+                failed_scrapes += 1
+                continue
             
             # Add date information
             goalie_stats_df['date'] = current_date.date()
@@ -487,6 +521,7 @@ def scrape_goalie_stats_range(
             # Log details about the returned DataFrame
             logger.info(f"Goalie Stats DataFrame shape: {goalie_stats_df.shape}")
             logger.info(f"Goalie Stats DataFrame columns: {goalie_stats_df.columns.tolist()}")
+            logger.info(f"Sample data: {goalie_stats_df.head(2).to_dict('records')}")
             
             # Connect to the database
             conn = connect_db(db_prefix)
@@ -1765,6 +1800,9 @@ def add_home_away_data_to_goalie_stats(
     3. Determines if their team was home or away
     4. Updates the goalie stats tables with a 'side' column
     
+    The function handles the conversion between Natural Stat Trick (NST) team abbreviations
+    and NHL API team codes (e.g., 'N.J' to 'NJD') automatically.
+    
     Args:
         start_date: Start date in 'YYYY-MM-DD' format
         end_date: End date in 'YYYY-MM-DD' format
@@ -1789,15 +1827,9 @@ def add_home_away_data_to_goalie_stats(
     cursor = conn.cursor()
     
     # Check if side column exists, add it if it doesn't
-    # Use a separate connection for this check to avoid transaction issues
-    check_conn = None
-    check_cursor = None
     try:
-        check_conn = connect_db(db_prefix)
-        check_cursor = check_conn.cursor()
-        
         # Check if the column exists using information_schema
-        check_cursor.execute(
+        cursor.execute(
             """
             SELECT column_name 
             FROM information_schema.columns 
@@ -1806,23 +1838,17 @@ def add_home_away_data_to_goalie_stats(
             (table_name,)
         )
         
-        column_exists = check_cursor.fetchone() is not None
+        column_exists = cursor.fetchone() is not None
         
         if not column_exists:
             logger.info(f"Adding side column to {table_name}")
-            check_cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN side VARCHAR(10)")
-            check_conn.commit()
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN side VARCHAR(10)")
+            conn.commit()
             logger.info(f"Successfully added side column to {table_name}")
     except Exception as e:
         logger.error(f"Error checking/adding side column: {str(e)}")
-        if check_conn:
-            check_conn.rollback()
+        conn.rollback()
         raise
-    finally:
-        if check_cursor:
-            check_cursor.close()
-        if check_conn:
-            disconnect_db(check_conn)
     
     # First, check if we have data for the date range
     cursor.execute(
@@ -1837,7 +1863,6 @@ def add_home_away_data_to_goalie_stats(
     else:
         # Create a dictionary for quick lookup of existing data
         existing_dates_goalies = {(row[0], row[1], row[2]) for row in existing_data}
-        has_existing_data = True
         logger.info(f"Found {len(existing_dates_goalies)} goalie-date combinations in the database")
         
         # Log a sample of the data for debugging
@@ -1871,49 +1896,38 @@ def add_home_away_data_to_goalie_stats(
                 home_team_data = game.get('homeTeam', {})
                 away_team_data = game.get('awayTeam', {})
                 
-                # Get team names - try different fields that might be available
+                # Get team abbreviations from NHL API - these will match our database format
                 home_team = home_team_data.get('abbrev', home_team_data.get('triCode', ''))
                 away_team = away_team_data.get('abbrev', away_team_data.get('triCode', ''))
                 
-                home_team = get_fullname_by_tricode(home_team)
-                away_team = get_fullname_by_tricode(away_team)
-                
-                # Remove accent marks and punctuation from both team names
-                home_team = ''.join(
-                    c for c in unicodedata.normalize('NFD', home_team)
-                    if unicodedata.category(c) != 'Mn' and (c.isalnum() or c.isspace())
-                )
-                away_team = ''.join(
-                    c for c in unicodedata.normalize('NFD', away_team)
-                    if unicodedata.category(c) != 'Mn' and (c.isalnum() or c.isspace())
-                )
+                if not home_team or not away_team:
+                    logger.warning(f"Missing team abbreviation in NHL API response")
+                    continue
                 
                 game_date = current_date_str
                 
-                # Update goalie records for this game
-                # For home team goalies
+                # Update goalie records for this game using NHL abbreviations directly
                 cursor.execute(
                     f"""
                     UPDATE {table_name} 
                     SET side = 'home' 
                     WHERE date = %s 
-                    AND team LIKE %s
-                    AND side IS NULL
+                    AND team = %s
+                    AND (side IS NULL OR side = '')
                     """,
-                    (game_date, f"%{home_team}%")
+                    (game_date, home_team)
                 )
                 home_goalies_updated = cursor.rowcount
                 
-                # For away team goalies
                 cursor.execute(
                     f"""
                     UPDATE {table_name} 
                     SET side = 'away' 
                     WHERE date = %s 
-                    AND team LIKE %s
-                    AND side IS NULL
+                    AND team = %s
+                    AND (side IS NULL OR side = '')
                     """,
-                    (game_date, f"%{away_team}%")
+                    (game_date, away_team)
                 )
                 away_goalies_updated = cursor.rowcount
                 
@@ -1963,3 +1977,190 @@ def add_home_away_data_to_goalie_stats(
         
         Try running check_available_dates() to see what data is available.
         """)
+
+def populate_and_update_goalie_home_away_data(
+    start_date: str,
+    end_date: str,
+    db_prefix: str = "NST_DB_",
+    situation: str = "all",
+    delay_min: int = 3,
+    delay_max: int = 7
+) -> None:
+    """
+    Populate goalie stats data and add home/away information in one step.
+    
+    This function:
+    1. Scrapes goalie stats data for the specified date range
+    2. Adds home/away information from the NHL API
+    
+    The function handles the conversion between Natural Stat Trick (NST) team abbreviations
+    and NHL API team codes (e.g., 'N.J' to 'NJD') automatically.
+    
+    Args:
+        start_date: Start date in 'YYYY-MM-DD' format
+        end_date: End date in 'YYYY-MM-DD' format
+        db_prefix: Prefix for database environment variables
+        situation: The game situation to scrape ('all', '5v5', or 'pk')
+        delay_min: Minimum delay between requests (seconds)
+        delay_max: Maximum delay between requests (seconds)
+    """
+    # Determine table name based on situation
+    if situation == "all":
+        table_name = "goalie_stats_all"
+    elif situation == "5v5":
+        table_name = "goalie_stats_5v5"
+    elif situation == "pk":
+        table_name = "goalie_stats_pk"
+    else:
+        raise ValueError(f"Invalid situation: {situation}. Must be one of: 'all', '5v5', 'pk'")
+    
+    # Step 1: Scrape goalie stats data
+    logger.info(f"Step 1: Scraping goalie stats data for {start_date} to {end_date}")
+    try:
+        # Check if the table exists before scraping
+        conn = connect_db(db_prefix)
+        if conn is None:
+            raise Exception("Failed to establish database connection")
+        
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = %s
+            );
+            """, 
+            (table_name,)
+        )
+        table_exists = cursor.fetchone()[0]
+        
+        if not table_exists:
+            logger.warning(f"Table {table_name} does not exist. Creating it now.")
+            # Create the table if it doesn't exist
+            create_table_query = f"""
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                player VARCHAR(255),
+                team VARCHAR(10),
+                gp INTEGER,
+                toi FLOAT,
+                shots_against INTEGER,
+                saves INTEGER,
+                goals_against INTEGER,
+                sv_pct FLOAT,
+                gaa FLOAT,
+                gsaa FLOAT,
+                xg_against FLOAT,
+                hd_shots_against INTEGER,
+                hd_saves INTEGER,
+                hd_goals_against INTEGER,
+                hdsv_pct FLOAT,
+                hdgaa FLOAT,
+                hdgsaa FLOAT,
+                md_shots_against INTEGER,
+                md_saves INTEGER,
+                md_goals_against INTEGER,
+                mdsv_pct FLOAT,
+                mdgaa FLOAT,
+                mdgsaa FLOAT,
+                ld_shots_against INTEGER,
+                ld_saves INTEGER,
+                ld_goals_against INTEGER,
+                ldsv_pct FLOAT,
+                ldgaa FLOAT,
+                ldgsaa FLOAT,
+                rush_attempts_against INTEGER,
+                rebound_attempts_against INTEGER,
+                avg_shot_distance FLOAT,
+                avg_goal_distance FLOAT,
+                date DATE,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                season VARCHAR(10),
+                side VARCHAR(10)
+            );
+            """
+            cursor.execute(create_table_query)
+            conn.commit()
+            logger.info(f"Created table {table_name}")
+        
+        # Check if there's any data for the date range
+        cursor.execute(
+            f"SELECT COUNT(*) FROM {table_name} WHERE date BETWEEN %s AND %s",
+            (start_date, end_date)
+        )
+        existing_records = cursor.fetchone()[0]
+        logger.info(f"Found {existing_records} existing records in {table_name} for date range {start_date} to {end_date}")
+        
+        cursor.close()
+        disconnect_db(conn)
+        
+        # Scrape the data
+        scrape_goalie_stats_range(
+            start_date=start_date,
+            end_date=end_date,
+            db_prefix=db_prefix,
+            delay_min=delay_min,
+            delay_max=delay_max,
+            situation=situation
+        )
+        
+        # Verify data was added
+        conn = connect_db(db_prefix)
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT COUNT(*) FROM {table_name} WHERE date BETWEEN %s AND %s",
+            (start_date, end_date)
+        )
+        new_records = cursor.fetchone()[0]
+        records_added = new_records - existing_records
+        logger.info(f"Added {records_added} new records to {table_name}")
+        
+        cursor.close()
+        disconnect_db(conn)
+        
+    except Exception as e:
+        logger.error(f"Error in Step 1 (scraping goalie stats): {str(e)}")
+        raise
+    
+    # Step 2: Add home/away information
+    logger.info(f"Step 2: Adding home/away information for {start_date} to {end_date}")
+    try:
+        add_home_away_data_to_goalie_stats(
+            start_date=start_date,
+            end_date=end_date,
+            db_prefix=db_prefix,
+            table_name=table_name,
+            delay_min=1,  # Use shorter delays for API calls
+            delay_max=3
+        )
+    except Exception as e:
+        logger.error(f"Error in Step 2 (adding home/away data): {str(e)}")
+        raise
+    
+    # Final verification
+    try:
+        conn = connect_db(db_prefix)
+        cursor = conn.cursor()
+        
+        # Check how many records have side information
+        cursor.execute(
+            f"SELECT COUNT(*) FROM {table_name} WHERE date BETWEEN %s AND %s AND side IS NOT NULL AND side != ''",
+            (start_date, end_date)
+        )
+        records_with_side = cursor.fetchone()[0]
+        
+        # Check total records
+        cursor.execute(
+            f"SELECT COUNT(*) FROM {table_name} WHERE date BETWEEN %s AND %s",
+            (start_date, end_date)
+        )
+        total_records = cursor.fetchone()[0]
+        
+        logger.info(f"Final verification: {records_with_side} of {total_records} records have side information")
+        
+        cursor.close()
+        disconnect_db(conn)
+    except Exception as e:
+        logger.error(f"Error in final verification: {str(e)}")
+    
+    logger.info(f"Completed populating and updating goalie home/away data for {start_date} to {end_date} in {table_name}")
