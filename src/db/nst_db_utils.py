@@ -5,6 +5,7 @@ import time
 from typing import Optional
 from datetime import datetime, timedelta
 import unicodedata
+import requests
 
 from src.db.base_utils import connect_db, disconnect_db
 from src.data_processing.nst_scraper import nst_on_ice_scraper, nst_team_on_ice_scraper
@@ -1349,11 +1350,6 @@ def add_home_away_data_from_nhl_api(
         delay_min: Minimum delay between API requests (seconds)
         delay_max: Maximum delay between API requests (seconds)
     """
-    import requests
-    from datetime import datetime, timedelta
-    import time
-    import random
-    from src.data_processing.team_utils import get_week_schedule, get_tricode_by_fullname, nst_to_nhl_tricode
     
     # Convert dates to datetime objects
     start = datetime.strptime(start_date, '%Y-%m-%d')
