@@ -1747,3 +1747,219 @@ def check_available_dates(
     finally:
         cursor.close()
         disconnect_db(conn)
+
+def add_home_away_data_to_goalie_stats(
+    start_date: str,
+    end_date: str,
+    db_prefix: str = "NST_DB_",
+    table_name: str = "goalie_stats_all",
+    delay_min: int = 1,
+    delay_max: int = 3
+) -> None:
+    """
+    Fetch home/away data from NHL API for a date range and update existing goalie stats tables.
+    
+    This function:
+    1. Queries the NHL API for games in the specified date range
+    2. Matches goalies to their teams for each game
+    3. Determines if their team was home or away
+    4. Updates the goalie stats tables with a 'side' column
+    
+    Args:
+        start_date: Start date in 'YYYY-MM-DD' format
+        end_date: End date in 'YYYY-MM-DD' format
+        db_prefix: Prefix for database environment variables
+        table_name: The table to update (e.g., 'goalie_stats_all', 'goalie_stats_5v5')
+        delay_min: Minimum delay between API requests (seconds)
+        delay_max: Maximum delay between API requests (seconds)
+    """
+    # Convert dates to datetime objects
+    start = datetime.strptime(start_date, '%Y-%m-%d')
+    end = datetime.strptime(end_date, '%Y-%m-%d')
+    
+    # Initialize counters for logging
+    games_processed = 0
+    goalies_updated = 0
+    
+    # Connect to the database
+    conn = connect_db(db_prefix)
+    if conn is None:
+        raise Exception("Failed to establish database connection")
+    
+    cursor = conn.cursor()
+    
+    # Check if side column exists, add it if it doesn't
+    # Use a separate connection for this check to avoid transaction issues
+    check_conn = None
+    check_cursor = None
+    try:
+        check_conn = connect_db(db_prefix)
+        check_cursor = check_conn.cursor()
+        
+        # Check if the column exists using information_schema
+        check_cursor.execute(
+            """
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = %s AND column_name = 'side'
+            """, 
+            (table_name,)
+        )
+        
+        column_exists = check_cursor.fetchone() is not None
+        
+        if not column_exists:
+            logger.info(f"Adding side column to {table_name}")
+            check_cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN side VARCHAR(10)")
+            check_conn.commit()
+            logger.info(f"Successfully added side column to {table_name}")
+    except Exception as e:
+        logger.error(f"Error checking/adding side column: {str(e)}")
+        if check_conn:
+            check_conn.rollback()
+        raise
+    finally:
+        if check_cursor:
+            check_cursor.close()
+        if check_conn:
+            disconnect_db(check_conn)
+    
+    # First, check if we have data for the date range
+    cursor.execute(
+        f"SELECT DISTINCT date::text, player, team FROM {table_name} WHERE date BETWEEN %s AND %s",
+        (start_date, end_date)
+    )
+    existing_data = cursor.fetchall()
+    
+    if not existing_data:
+        logger.warning(f"No goalie stats data found in {table_name} for date range {start_date} to {end_date}")
+        logger.info("You may need to run scrape_goalie_stats_range() first to populate the data")
+    else:
+        # Create a dictionary for quick lookup of existing data
+        existing_dates_goalies = {(row[0], row[1], row[2]) for row in existing_data}
+        has_existing_data = True
+        logger.info(f"Found {len(existing_dates_goalies)} goalie-date combinations in the database")
+        
+        # Log a sample of the data for debugging
+        sample_data = list(existing_dates_goalies)[:5]
+        logger.info(f"Sample data (date, goalie, team): {sample_data}")
+    
+    # Process each day in the date range
+    current_date = start
+    while current_date <= end:
+        current_date_str = current_date.strftime('%Y-%m-%d')
+        logger.info(f"Processing games for date: {current_date_str}")
+        
+        try:
+            # Try to get schedule data using the NHL API
+            url = f"https://api-web.nhle.com/v1/schedule/{current_date_str}"
+            response = requests.get(url)
+            response.raise_for_status()
+            schedule_data = response.json()
+            
+            # Extract games for the current date
+            games_for_date = []
+            if 'gameWeek' in schedule_data and schedule_data['gameWeek']:
+                for day_data in schedule_data['gameWeek']:
+                    if day_data.get('date') == current_date_str and 'games' in day_data:
+                        games_for_date = day_data['games']
+                        logger.info(f"Found {len(games_for_date)} games using schedule endpoint")
+            
+            # Process each game
+            for game in games_for_date:
+                # Extract home and away team information
+                home_team_data = game.get('homeTeam', {})
+                away_team_data = game.get('awayTeam', {})
+                
+                # Get team names - try different fields that might be available
+                home_team = home_team_data.get('abbrev', home_team_data.get('triCode', ''))
+                away_team = away_team_data.get('abbrev', away_team_data.get('triCode', ''))
+                
+                home_team = get_fullname_by_tricode(home_team)
+                away_team = get_fullname_by_tricode(away_team)
+                
+                # Remove accent marks and punctuation from both team names
+                home_team = ''.join(
+                    c for c in unicodedata.normalize('NFD', home_team)
+                    if unicodedata.category(c) != 'Mn' and (c.isalnum() or c.isspace())
+                )
+                away_team = ''.join(
+                    c for c in unicodedata.normalize('NFD', away_team)
+                    if unicodedata.category(c) != 'Mn' and (c.isalnum() or c.isspace())
+                )
+                
+                game_date = current_date_str
+                
+                # Update goalie records for this game
+                # For home team goalies
+                cursor.execute(
+                    f"""
+                    UPDATE {table_name} 
+                    SET side = 'home' 
+                    WHERE date = %s 
+                    AND team LIKE %s
+                    AND side IS NULL
+                    """,
+                    (game_date, f"%{home_team}%")
+                )
+                home_goalies_updated = cursor.rowcount
+                
+                # For away team goalies
+                cursor.execute(
+                    f"""
+                    UPDATE {table_name} 
+                    SET side = 'away' 
+                    WHERE date = %s 
+                    AND team LIKE %s
+                    AND side IS NULL
+                    """,
+                    (game_date, f"%{away_team}%")
+                )
+                away_goalies_updated = cursor.rowcount
+                
+                goalies_updated += home_goalies_updated + away_goalies_updated
+                games_processed += 1
+                
+                logger.info(
+                    f"Game: {away_team} @ {home_team} on {game_date} - "
+                    f"Updated {home_goalies_updated + away_goalies_updated} goalie records"
+                )
+            
+            # Commit changes for this day
+            conn.commit()
+            
+        except Exception as e:
+            logger.error(f"Error processing games for {current_date_str}: {str(e)}")
+            conn.rollback()
+        
+        # Add delay before next request
+        if current_date < end:
+            delay = random.uniform(delay_min, delay_max)
+            logger.info(f"Waiting {delay:.1f} seconds before next request...")
+            time.sleep(delay)
+        
+        # Move to next day
+        current_date += timedelta(days=1)
+    
+    # Close database connection
+    cursor.close()
+    disconnect_db(conn)
+    
+    # Log summary
+    logger.info(f"""
+    Home/away data update completed for goalies:
+    - Date range: {start_date} to {end_date}
+    - Games processed: {games_processed}
+    - Goalie records updated: {goalies_updated}
+    - Table: {table_name}
+    """)
+    
+    if goalies_updated == 0:
+        logger.warning("""
+        No goalie records were updated. This could be due to:
+        1. No goalie stats data exists for the specified date range
+        2. Team name mapping issues between NHL API and database
+        3. The data may already have 'side' values set
+        
+        Try running check_available_dates() to see what data is available.
+        """)
