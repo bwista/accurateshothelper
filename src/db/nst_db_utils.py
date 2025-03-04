@@ -133,7 +133,8 @@ def get_goalie_stats(
     end_date: Optional[str] = None,
     last_n: Optional[int] = None,
     db_prefix: str = "NST_DB_",
-    table_name: str = "goalie_stats_all"
+    table_name: str = "goalie_stats_all",
+    side: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Retrieve goalie stats from the database with optional filters.
@@ -146,6 +147,7 @@ def get_goalie_stats(
         last_n: Optional number of days to look back from end_date, will span across seasons if needed
         db_prefix: Database environment variable prefix
         table_name: Name of the table to query (default: "goalie_stats_all")
+        side: Optional filter for home/away games ('home', 'away', or None for both)
     Returns:
         DataFrame containing goalie statistics
     """
@@ -158,6 +160,11 @@ def get_goalie_stats(
     if team:
         conditions.append("team = %s")
         params.append(team)
+    
+    # Add side filter if provided
+    if side in ['home', 'away']:
+        conditions.append("side = %s")
+        params.append(side)
         
     # Handle date filtering with last_n logic
     if last_n is not None:
@@ -243,15 +250,34 @@ def get_goalie_stats(
             rebound_attempts_against,
             avg_shot_distance,
             avg_goal_distance
-        FROM {table_name}
-        WHERE {where_clause}
-        ORDER BY date DESC
     """
     
+    # Check if side column exists in the table and include it in the query if it does
     conn = None
     try:
         conn = connect_db(db_prefix)
         cur = conn.cursor()
+        
+        # Check if the side column exists
+        cur.execute(
+            """
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = %s AND column_name = 'side'
+            """, 
+            (table_name,)
+        )
+        
+        side_column_exists = cur.fetchone() is not None
+        
+        if side_column_exists:
+            query += ", side"
+            
+        query += f"""
+        FROM {table_name}
+        WHERE {where_clause}
+        ORDER BY date DESC
+        """
         
         # Execute query
         cur.execute(query, params)
@@ -268,7 +294,7 @@ def get_goalie_stats(
     except Exception as e:
         logger.error(f"Error retrieving goalie stats: {e}")
         # Return an empty DataFrame with the expected columns if there's an error
-        return pd.DataFrame(columns=[
+        columns = [
             'date', 'player', 'team', 'toi', 'shots_against', 'saves',
             'goals_against', 'sv_pct', 'gaa', 'gsaa', 'xg_against',
             'hd_shots_against', 'hd_saves', 'hd_goals_against', 'hdsv_pct',
@@ -276,7 +302,13 @@ def get_goalie_stats(
             'ld_shots_against', 'ld_saves', 'ld_goals_against', 'ldsv_pct',
             'rush_attempts_against', 'rebound_attempts_against',
             'avg_shot_distance', 'avg_goal_distance'
-        ])
+        ]
+        
+        # Add side column to expected columns if it exists
+        if conn and side_column_exists:
+            columns.append('side')
+            
+        return pd.DataFrame(columns=columns)
     finally:
         if conn:
             cur.close()
