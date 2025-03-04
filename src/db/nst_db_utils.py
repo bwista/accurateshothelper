@@ -451,14 +451,6 @@ def scrape_goalie_stats_range(
     start = datetime.strptime(start_date, '%Y-%m-%d')
     end = datetime.strptime(end_date, '%Y-%m-%d')
     
-    # Get seasons for start and end dates
-    try:
-        start_season = get_season_for_date(start_date)
-        end_season = get_season_for_date(end_date)
-    except ValueError as e:
-        logger.error(f"Error determining seasons: {e}")
-        raise
-    
     # Initialize counters for logging purposes
     successful_scrapes = 0
     failed_scrapes = 0
@@ -473,7 +465,12 @@ def scrape_goalie_stats_range(
             logger.info(f"Scraping data for date: {current_date_str}")
             
             # Get the season for the current date
-            current_season = get_season_for_date(current_date_str)
+            try:
+                current_season = get_season_for_date(current_date_str)
+                logger.info(f"Using season: {current_season} for date: {current_date_str}")
+            except ValueError as e:
+                logger.error(f"Error determining season for {current_date_str}: {e}")
+                raise
             
             # Log the URL that will be used for scraping
             scrape_url = (
@@ -512,11 +509,8 @@ def scrape_goalie_stats_range(
             # Add date information
             goalie_stats_df['date'] = current_date.date()
             
-            # Add season information for logging
-            year = current_date.year
-            month = current_date.month
-            season = f"{year-1}-{str(year)[2:]}" if month < 7 else f"{year}-{str(year+1)[2:]}"
-            goalie_stats_df['season'] = season
+            # Add season information using the calculated season
+            goalie_stats_df['season'] = current_season
             
             # Log details about the returned DataFrame
             logger.info(f"Goalie Stats DataFrame shape: {goalie_stats_df.shape}")
@@ -790,13 +784,13 @@ def get_team_stats(
     It selects the appropriate table based on the situation parameter.
     
     When last_n is provided, the function aggregates statistics for each team
-    over the specified time period, rather than returning individual game records.
+    over the specified number of most recent games, rather than returning individual game records.
     
     Args:
         team: Optional team name to filter by (NHL tricode)
         start_date: Optional start date for date range
         end_date: Optional end date for date range
-        last_n: Optional number of days to look back from end_date, will span across seasons if needed
+        last_n: Optional number of most recent games to include for each team
         db_prefix: Database environment variable prefix
         situation: The game situation to query ('all', '5v5', 'pk', or 'pp'). Determines which table to use.
         stype: Type of statistics to retrieve. Defaults to 2 for regular season.
@@ -829,53 +823,7 @@ def get_team_stats(
         conditions.append("side = %s")
         params.append(side)
     
-    # Handle date filtering with last_n logic
-    if last_n is not None:
-        if end_date is None:
-            # If no end_date provided, use current date
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            
-        try:
-            # Calculate start_date based on last_n days with season spanning logic
-            end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
-            end_season = get_season_for_date(end_date)
-            
-            if end_season in NHL_SEASONS:
-                season_start_obj = datetime.strptime(NHL_SEASONS[end_season]['start'], '%Y-%m-%d')
-                
-                # Calculate days since season start
-                days_since_season_start = (end_date_obj - season_start_obj).days
-                
-                if days_since_season_start < last_n:
-                    # Need to go into previous season
-                    prev_season = end_season - 10001  # e.g., 20242025 -> 20232024
-                    if prev_season in NHL_SEASONS:
-                        # Calculate remaining days to look back in previous season
-                        remaining_days = last_n - days_since_season_start
-                        prev_season_end = get_season_end_date(prev_season, stype)
-                        prev_season_end_obj = datetime.strptime(prev_season_end, '%Y-%m-%d')
-                        start_date_obj = prev_season_end_obj - timedelta(days=remaining_days)
-                        start_date = start_date_obj.strftime('%Y-%m-%d')
-                    else:
-                        # If no previous season data, just go back from season start
-                        start_date_obj = season_start_obj - timedelta(days=last_n)
-                        start_date = start_date_obj.strftime('%Y-%m-%d')
-                else:
-                    # All dates within current season
-                    start_date_obj = end_date_obj - timedelta(days=last_n)
-                    start_date = start_date_obj.strftime('%Y-%m-%d')
-            else:
-                # If season not found, just do simple date arithmetic
-                start_date_obj = end_date_obj - timedelta(days=last_n)
-                start_date = start_date_obj.strftime('%Y-%m-%d')
-                
-        except ValueError as e:
-            logger.error(f"Error calculating dates: {e}")
-            # Fall back to simple date arithmetic if season logic fails
-            end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
-            start_date_obj = end_date_obj - timedelta(days=last_n)
-            start_date = start_date_obj.strftime('%Y-%m-%d')
-    
+    # Handle date filtering
     if start_date:
         conditions.append("date >= %s")
         params.append(start_date)
@@ -902,7 +850,7 @@ def get_team_stats(
         
         # Build the query based on whether we need to aggregate or not
         if last_n is not None:
-            # We need to aggregate by team
+            # We need to aggregate by team for the last N games
             # First, identify numeric columns for aggregation
             numeric_columns = []
             non_numeric_columns = []
@@ -910,8 +858,11 @@ def get_team_stats(
             for col_name, data_type in column_info:
                 if col_name == 'team':
                     continue  # Skip team as it's our grouping column
-                elif col_name in ['date', 'last_updated', 'season', 'side']:
-                    # Skip date-related columns and side for aggregation
+                elif col_name in ['date', 'last_updated', 'season']:
+                    # Skip date-related columns for aggregation
+                    continue
+                elif col_name == 'side':
+                    # Keep side for grouping if needed
                     continue
                 elif data_type in ['integer', 'numeric', 'real', 'double precision']:
                     numeric_columns.append(col_name)
@@ -994,22 +945,56 @@ def get_team_stats(
             agg_expressions.append("MAX(date) as last_game_date")
             agg_expressions.append("MAX(season) as season")
             
-            # Include side in the group by if it's being filtered
-            group_by = "team"
-            if side:
+            # Include side in the group by if it exists in the table
+            group_by_cols = ["team"]
+            if any(col_name == 'side' for col_name, _ in column_info):
                 agg_expressions.append("side")
-                group_by = "team, side"
+                group_by_cols.append("side")
             
-            # Build the final query with aggregation
-            query = f"""
-                SELECT 
-                    team,
-                    {', '.join(agg_expressions)}
-                FROM {table_name}
-                WHERE {where_clause}
-                GROUP BY {group_by}
-                ORDER BY SUM(points) DESC
-            """
+            group_by = ", ".join(group_by_cols)
+            
+            # For each team, get the last N games
+            if team:
+                # If a specific team is requested, we can use a simpler approach
+                query = f"""
+                    WITH team_games AS (
+                        SELECT *
+                        FROM {table_name}
+                        WHERE {where_clause}
+                        ORDER BY date DESC
+                        LIMIT {last_n}
+                    )
+                    SELECT 
+                        team,
+                        {', '.join(agg_expressions)}
+                    FROM team_games
+                    GROUP BY {group_by}
+                """
+            else:
+                # For all teams, we need to get the last N games for each team
+                partition_by = "team"
+                if side:
+                    partition_by += ", side"
+                
+                query = f"""
+                    WITH ranked_games AS (
+                        SELECT 
+                            *,
+                            ROW_NUMBER() OVER (PARTITION BY {partition_by} ORDER BY date DESC) as row_num
+                        FROM {table_name}
+                        WHERE {where_clause}
+                    ),
+                    recent_games AS (
+                        SELECT * FROM ranked_games
+                        WHERE row_num <= {last_n}
+                    )
+                    SELECT 
+                        team,
+                        {', '.join(agg_expressions)}
+                    FROM recent_games
+                    GROUP BY {group_by}
+                    ORDER BY SUM(points) DESC
+                """
         else:
             # No aggregation needed, return all records
             query = f"""
@@ -1054,16 +1039,15 @@ def scrape_team_stats_home_away_range(
     
     This function iterates through each day in the provided date range.
     For each day, it calls the team scraper to retrieve home and away data separately,
-    then inserts that day's records into the database with a 'location' column to indicate
-    whether the stats are for home or away games.
+    and saves the results to the database.
     
     Args:
         start_date: Start date in 'YYYY-MM-DD' format
         end_date: End date in 'YYYY-MM-DD' format
-        db_prefix: Prefix for database environment variables
-        delay_min: Minimum delay between requests (seconds)
-        delay_max: Maximum delay between requests (seconds)
-        situation: The game situation to scrape ('all', '5v5', 'pk', or 'pp'). Determines which table to use.
+        db_prefix: Database environment variable prefix
+        delay_min: Minimum delay between requests in seconds
+        delay_max: Maximum delay between requests in seconds
+        situation: The game situation to scrape ('all', '5v5', 'pk', or 'pp')
         stype: Type of statistics to retrieve. Defaults to 2 for regular season.
     """
     # Determine table name based on situation
@@ -1201,166 +1185,6 @@ def scrape_team_stats_home_away_range(
     - Table: {table_name}
     """)
 
-def get_team_home_away_stats(
-    team: Optional[str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    last_n: Optional[int] = None,
-    db_prefix: str = "NST_DB_",
-    situation: str = "all",
-    stype: int = 2,
-    location: str = "both"  # "both", "home", or "away"
-) -> pd.DataFrame:
-    """
-    Retrieve team statistics from the database for home or away games, or both.
-    
-    This function queries the team_stats tables for the specified situation and location,
-    applying filters for team, date range, and/or last N games.
-    
-    Args:
-        team: Team abbreviation to filter by (e.g., 'TOR')
-        start_date: Start date in 'YYYY-MM-DD' format
-        end_date: End date in 'YYYY-MM-DD' format
-        last_n: Number of most recent games to include
-        db_prefix: Database environment variable prefix
-        situation: The game situation to query ('all', '5v5', 'pk', or 'pp'). Determines which table to use.
-        stype: Type of statistics to retrieve. Defaults to 2 for regular season.
-        location: Location filter - 'both' for both home and away, 'home' for home only, 'away' for away only.
-    
-    Returns:
-        DataFrame containing team statistics, aggregated by team if last_n is provided
-    """
-    # Determine table names based on situation and location
-    if situation == "all":
-        base_table = "team_stats_all"
-    elif situation == "5v5":
-        base_table = "team_stats_5v5"
-    elif situation == "pk":
-        base_table = "team_stats_pk"
-    elif situation == "pp":
-        base_table = "team_stats_pp"
-    else:
-        raise ValueError(f"Invalid situation: {situation}. Must be one of: 'all', '5v5', 'pk', 'pp'")
-    
-    # Determine which tables to query based on location
-    if location == "home":
-        tables = [f"{base_table}_h"]
-    elif location == "away":
-        tables = [f"{base_table}_a"]
-    elif location == "both":
-        tables = [f"{base_table}_h", f"{base_table}_a"]
-    else:
-        raise ValueError(f"Invalid location: {location}. Must be one of: 'both', 'home', 'away'")
-    
-    # Initialize an empty list to store DataFrames from each table
-    dfs = []
-    
-    for table_name in tables:
-        conditions = []
-        params = []
-        
-        if team:
-            conditions.append("team = %s")
-            params.append(team)
-        
-        # Add location filter if provided
-        if location in ['home', 'away']:
-            conditions.append("location = %s")
-            params.append(location)
-        
-        # Handle date filtering with last_n logic
-        if last_n is not None:
-            if end_date is None:
-                # If no end_date provided, use current date
-                end_date = datetime.now().strftime('%Y-%m-%d')
-                
-            try:
-                # Calculate start_date based on last_n days with season spanning logic
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
-                end_season = get_season_for_date(end_date)
-                
-                if end_season in NHL_SEASONS:
-                    season_start_obj = datetime.strptime(NHL_SEASONS[end_season]['start'], '%Y-%m-%d')
-                    
-                    # If end_date is before season start, adjust to season start
-                    if end_date_obj < season_start_obj:
-                        end_date_obj = season_start_obj
-                        end_date = end_date_obj.strftime('%Y-%m-%d')
-                
-                # Add end_date condition
-                conditions.append("date <= %s")
-                params.append(end_date)
-                
-                # For last_n, we'll handle this by ordering and limiting in the query
-                # rather than calculating a start date
-            except ValueError as e:
-                logger.error(f"Error calculating date range: {str(e)}")
-                raise
-        else:
-            # Standard date range filtering
-            if start_date:
-                conditions.append("date >= %s")
-                params.append(start_date)
-            if end_date:
-                conditions.append("date <= %s")
-                params.append(end_date)
-        
-        # Build the WHERE clause
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-        
-        # Build the query
-        if last_n is not None:
-            # For last_n, we need to order by date and limit
-            query = f"""
-            SELECT * FROM {table_name}
-            WHERE {where_clause}
-            ORDER BY date DESC
-            LIMIT {last_n}
-            """
-        else:
-            query = f"""
-            SELECT * FROM {table_name}
-            WHERE {where_clause}
-            ORDER BY date
-            """
-        
-        # Connect to the database and execute the query
-        conn = connect_db(db_prefix)
-        if conn is None:
-            raise Exception(f"Failed to connect to database with prefix {db_prefix}")
-        
-        try:
-            # Add a location column to identify the source table
-            location_label = "home" if "_h" in table_name else "away"
-            
-            # Execute the query and fetch the results
-            df = pd.read_sql_query(query, conn, params=params)
-            
-            # Add a location column
-            df['location'] = location_label
-            
-            # Append to the list of DataFrames
-            if not df.empty:
-                dfs.append(df)
-        except Exception as e:
-            logger.error(f"Error querying {table_name}: {str(e)}")
-            raise
-        finally:
-            disconnect_db(conn)
-    
-    # Combine the DataFrames
-    if not dfs:
-        # Return an empty DataFrame with the expected columns
-        return pd.DataFrame()
-    
-    # Concatenate all DataFrames
-    result_df = pd.concat(dfs, ignore_index=True)
-    
-    # Sort by date
-    result_df = result_df.sort_values('date')
-    
-    return result_df 
-
 def add_home_away_data_from_nhl_api(
     start_date: str,
     end_date: str,
@@ -1370,22 +1194,19 @@ def add_home_away_data_from_nhl_api(
     delay_max: int = 3
 ) -> None:
     """
-    Fetch home/away data from NHL API for a date range and update existing team stats tables.
+    Add home/away information to team stats using the NHL API.
     
-    This function:
-    1. Queries the NHL API for games in the specified date range
-    2. Extracts home/away information for each team
-    3. Updates the existing team stats tables with a 'side' column
+    This function queries the NHL API to get game information for the specified date range,
+    and updates the team_stats table with home/away information.
     
     Args:
         start_date: Start date in 'YYYY-MM-DD' format
         end_date: End date in 'YYYY-MM-DD' format
-        db_prefix: Prefix for database environment variables
-        table_name: The table to update (e.g., 'team_stats_all', 'team_stats_5v5')
-        delay_min: Minimum delay between API requests (seconds)
-        delay_max: Maximum delay between API requests (seconds)
+        db_prefix: Database environment variable prefix
+        table_name: Name of the table to update
+        delay_min: Minimum delay between requests in seconds
+        delay_max: Maximum delay between requests in seconds
     """
-    
     # Convert dates to datetime objects
     start = datetime.strptime(start_date, '%Y-%m-%d')
     end = datetime.strptime(end_date, '%Y-%m-%d')
