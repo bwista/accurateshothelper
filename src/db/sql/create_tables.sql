@@ -22,6 +22,147 @@ CREATE TABLE IF NOT EXISTS public.players (
 CREATE INDEX IF NOT EXISTS idx_players_full_name ON players(full_name);
 CREATE INDEX IF NOT EXISTS idx_players_current_team ON players(current_team_id);
 
+-- Create NHL Game Tables
+
+-- Games Table
+CREATE TABLE IF NOT EXISTS public.games (
+    game_id INTEGER PRIMARY KEY,
+    season INTEGER NOT NULL,
+    game_type INTEGER NOT NULL,
+    game_date DATE NOT NULL,
+    venue_name VARCHAR(100),
+    venue_location VARCHAR(100),
+    start_time_utc TIMESTAMP WITH TIME ZONE NOT NULL,
+    eastern_utc_offset VARCHAR(6),
+    venue_utc_offset VARCHAR(6),
+    game_state VARCHAR(20),
+    game_schedule_state VARCHAR(20),
+    period_number INTEGER,
+    period_type VARCHAR(10),
+    max_regulation_periods INTEGER,
+    reg_periods INTEGER,
+    last_period_type VARCHAR(10),
+    ot_periods INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indices for games table
+CREATE INDEX IF NOT EXISTS idx_games_date ON games(game_date);
+CREATE INDEX IF NOT EXISTS idx_games_season ON games(season);
+
+-- Game Teams Table
+CREATE TABLE IF NOT EXISTS public.game_teams (
+    game_team_id SERIAL PRIMARY KEY,
+    game_id INTEGER REFERENCES games(game_id),
+    team_id INTEGER NOT NULL,
+    team_name VARCHAR(100),
+    team_abbrev VARCHAR(10),
+    is_home_team BOOLEAN NOT NULL,
+    score INTEGER,
+    shots_on_goal INTEGER,
+    team_logo_url VARCHAR(255),
+    team_dark_logo_url VARCHAR(255),
+    place_name VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(game_id, team_id)
+);
+
+-- Create indices for game teams table
+CREATE INDEX IF NOT EXISTS idx_game_teams_game ON game_teams(game_id);
+CREATE INDEX IF NOT EXISTS idx_game_teams_team ON game_teams(team_id);
+
+-- Game Broadcasts Table
+CREATE TABLE IF NOT EXISTS public.game_broadcasts (
+    broadcast_id INTEGER PRIMARY KEY,
+    game_id INTEGER REFERENCES games(game_id),
+    market VARCHAR(10),
+    country_code VARCHAR(2),
+    network VARCHAR(50),
+    sequence_number INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indices for game broadcasts table
+CREATE INDEX IF NOT EXISTS idx_game_broadcasts_game ON game_broadcasts(game_id);
+
+-- Player Game Statistics Table
+CREATE TABLE IF NOT EXISTS public.player_game_stats (
+    player_game_stat_id SERIAL PRIMARY KEY,
+    game_id INTEGER REFERENCES games(game_id),
+    game_team_id INTEGER REFERENCES game_teams(game_team_id),
+    player_id INTEGER REFERENCES players(player_id),
+    sweater_number INTEGER,
+    player_name VARCHAR(100),
+    position VARCHAR(2),
+    goals INTEGER DEFAULT 0,
+    assists INTEGER DEFAULT 0,
+    points INTEGER DEFAULT 0,
+    plus_minus INTEGER DEFAULT 0,
+    pim INTEGER DEFAULT 0,
+    hits INTEGER DEFAULT 0,
+    power_play_goals INTEGER DEFAULT 0,
+    shots_on_goal INTEGER DEFAULT 0,
+    faceoff_winning_pctg DECIMAL(5,3),
+    time_on_ice INTERVAL,
+    blocked_shots INTEGER DEFAULT 0,
+    shifts INTEGER DEFAULT 0,
+    giveaways INTEGER DEFAULT 0,
+    takeaways INTEGER DEFAULT 0,
+    is_starter BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(game_id, player_id)
+);
+
+-- Create indices for player game stats table
+CREATE INDEX IF NOT EXISTS idx_player_game_stats_game ON player_game_stats(game_id);
+CREATE INDEX IF NOT EXISTS idx_player_game_stats_player ON player_game_stats(player_id);
+CREATE INDEX IF NOT EXISTS idx_player_game_stats_team ON player_game_stats(game_team_id);
+
+-- Goalie Game Statistics Table
+CREATE TABLE IF NOT EXISTS public.goalie_game_stats (
+    goalie_game_stat_id SERIAL PRIMARY KEY,
+    player_game_stat_id INTEGER REFERENCES player_game_stats(player_game_stat_id),
+    even_strength_shots_against VARCHAR(20),
+    power_play_shots_against VARCHAR(20),
+    shorthanded_shots_against VARCHAR(20),
+    save_shots_against VARCHAR(20),
+    save_percentage DECIMAL(5,3),
+    even_strength_goals_against INTEGER DEFAULT 0,
+    power_play_goals_against INTEGER DEFAULT 0,
+    shorthanded_goals_against INTEGER DEFAULT 0,
+    goals_against INTEGER DEFAULT 0,
+    shots_against INTEGER DEFAULT 0,
+    saves INTEGER DEFAULT 0,
+    decision VARCHAR(1),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indices for goalie game stats table
+CREATE INDEX IF NOT EXISTS idx_goalie_game_stats_player ON goalie_game_stats(player_game_stat_id);
+
+-- Game Clock Status Table
+CREATE TABLE IF NOT EXISTS public.game_clock_status (
+    game_clock_id SERIAL PRIMARY KEY,
+    game_id INTEGER REFERENCES games(game_id),
+    time_remaining VARCHAR(10),
+    seconds_remaining INTEGER,
+    is_running BOOLEAN,
+    is_intermission BOOLEAN,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indices for game clock status table
+CREATE INDEX IF NOT EXISTS idx_game_clock_status_game ON game_clock_status(game_id);
+
+-- Add comments to game tables
+COMMENT ON TABLE public.games IS 'NHL game information including venue and timing details';
+COMMENT ON TABLE public.game_teams IS 'Team-specific information for each NHL game';
+COMMENT ON TABLE public.game_broadcasts IS 'Broadcast information for NHL games';
+COMMENT ON TABLE public.player_game_stats IS 'Player statistics for each NHL game';
+COMMENT ON TABLE public.goalie_game_stats IS 'Detailed goalie statistics for each NHL game';
+COMMENT ON TABLE public.game_clock_status IS 'Game clock and period information for NHL games';
+
 -- Create The Odds Database Tables
 
 -- Game Information Table
