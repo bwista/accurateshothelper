@@ -26,7 +26,37 @@ NHL_SEASONS = {
         'start': '2021-01-13',
         'regular_end': '2021-05-19',
         'playoff_end': '2021-07-07'  # Covid-shortened season
-    }
+    },
+    20192020: {
+        'start': '2019-10-02',
+        'regular_end': '2020-03-10',
+        'playoff_end': '2020-09-28'
+    },
+    20182019: {
+        'start': '2018-10-03',
+        'regular_end': '2019-04-06',
+        'playoff_end': '2019-06-12'
+    },
+    20172018: {
+        'start': '2017-10-04',
+        'regular_end': '2018-04-08',
+        'playoff_end': '2018-06-07'
+    },
+    20162017: {
+        'start': '2016-10-12',
+        'regular_end': '2017-04-09',
+        'playoff_end': '2017-06-11'
+    },
+    20152016: {
+        'start': '2015-10-07',
+        'regular_end': '2016-04-10',
+        'playoff_end': '2016-06-12'
+    },
+    20142015: {
+        'start': '2014-10-08',
+        'regular_end': '2015-04-12',
+        'playoff_end': '2015-06-15'
+    }     
 }
 
 def get_season_end_date(season, stype=2):
