@@ -977,9 +977,12 @@ def get_team_stats(
             agg_expressions.append("MAX(date) as last_game_date")
             agg_expressions.append("MAX(season) as season")
             
-            # Include side in the group by if it exists in the table
+            # Include side in the group by and select only if explicitly requested
             group_by_cols = ["team"]
-            if any(col_name == 'side' for col_name, _ in column_info):
+            has_side_column = any(col_name == 'side' for col_name, _ in column_info)
+            
+            # Only include side in GROUP BY if it exists in the table AND side filter is specified
+            if has_side_column and side in ['home', 'away']:
                 agg_expressions.append("side")
                 group_by_cols.append("side")
             
@@ -1004,8 +1007,9 @@ def get_team_stats(
                 """
             else:
                 # For all teams, we need to get the last N games for each team
+                # Only partition by side if side filter is specified
                 partition_by = "team"
-                if side:
+                if side in ['home', 'away'] and has_side_column:
                     partition_by += ", side"
                 
                 query = f"""
