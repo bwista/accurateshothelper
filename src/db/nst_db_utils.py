@@ -144,7 +144,7 @@ def get_goalie_stats(
         team: Optional team name to filter by
         start_date: Optional start date for date range
         end_date: Optional end date for date range
-        last_n: Optional number of days to look back from end_date, will span across seasons if needed
+        last_n: Optional number of most recent games to return per goalie
         db_prefix: Database environment variable prefix
         table_name: Name of the table to query (default: "goalie_stats_all")
         side: Optional filter for home/away games ('home', 'away', or None for both)
@@ -166,52 +166,7 @@ def get_goalie_stats(
         conditions.append("side = %s")
         params.append(side)
         
-    # Handle date filtering with last_n logic
-    if last_n is not None:
-        if end_date is None:
-            # If no end_date provided, use current date
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            
-        try:
-            # Calculate start_date based on last_n days with season spanning logic
-            end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
-            end_season = get_season_for_date(end_date)
-            
-            if end_season in NHL_SEASONS:
-                season_start_obj = datetime.strptime(NHL_SEASONS[end_season]['start'], '%Y-%m-%d')
-                
-                # Calculate days since season start
-                days_since_season_start = (end_date_obj - season_start_obj).days
-                
-                if days_since_season_start < last_n:
-                    # Need to go into previous season
-                    prev_season = end_season - 10001  # e.g., 20242025 -> 20232024
-                    if prev_season in NHL_SEASONS:
-                        # Calculate remaining days to look back in previous season
-                        remaining_days = last_n - days_since_season_start
-                        prev_season_end = get_season_end_date(prev_season, 2)  # Using stype=2 for regular season
-                        prev_season_end_obj = datetime.strptime(prev_season_end, '%Y-%m-%d')
-                        start_date_obj = prev_season_end_obj - timedelta(days=remaining_days)
-                        start_date = start_date_obj.strftime('%Y-%m-%d')
-                    else:
-                        # If no previous season data, just go back from season start
-                        start_date_obj = season_start_obj - timedelta(days=last_n)
-                        start_date = start_date_obj.strftime('%Y-%m-%d')
-                else:
-                    # All dates within current season
-                    start_date_obj = end_date_obj - timedelta(days=last_n)
-                    start_date = start_date_obj.strftime('%Y-%m-%d')
-            else:
-                # If season not found, just do simple date arithmetic
-                start_date_obj = end_date_obj - timedelta(days=last_n)
-                start_date = start_date_obj.strftime('%Y-%m-%d')
-                
-        except ValueError as e:
-            logger.error(f"Error calculating dates: {e}")
-            # Fall back to simple date arithmetic if season logic fails
-            start_date_obj = end_date_obj - timedelta(days=last_n)
-            start_date = start_date_obj.strftime('%Y-%m-%d')
-        
+    # Handle date filtering
     if start_date:
         conditions.append("date >= %s")
         params.append(start_date)
@@ -221,38 +176,38 @@ def get_goalie_stats(
         
     where_clause = " AND ".join(conditions) if conditions else "1=1"
     
-    query = f"""
-        SELECT 
-            date,
-            player,
-            team,
-            toi,
-            shots_against,
-            saves,
-            goals_against,
-            sv_pct,
-            gaa,
-            gsaa,
-            xg_against,
-            hd_shots_against,
-            hd_saves,
-            hd_goals_against,
-            hdsv_pct,
-            md_shots_against,
-            md_saves,
-            md_goals_against,
-            mdsv_pct,
-            ld_shots_against,
-            ld_saves,
-            ld_goals_against,
-            ldsv_pct,
-            rush_attempts_against,
-            rebound_attempts_against,
-            avg_shot_distance,
-            avg_goal_distance
-    """
+    # Base columns to select
+    base_columns = [
+        "date",
+        "player",
+        "team",
+        "gp",  # Include gp column
+        "toi",
+        "shots_against",
+        "saves",
+        "goals_against",
+        "sv_pct",
+        "gaa",
+        "gsaa",
+        "xg_against",
+        "hd_shots_against",
+        "hd_saves",
+        "hd_goals_against",
+        "hdsv_pct",
+        "md_shots_against",
+        "md_saves",
+        "md_goals_against",
+        "mdsv_pct",
+        "ld_shots_against",
+        "ld_saves",
+        "ld_goals_against",
+        "ldsv_pct",
+        "rush_attempts_against",
+        "rebound_attempts_against",
+        "avg_shot_distance",
+        "avg_goal_distance"
+    ]
     
-    # Check if side column exists in the table and include it in the query if it does
     conn = None
     try:
         conn = connect_db(db_prefix)
@@ -270,14 +225,83 @@ def get_goalie_stats(
         
         side_column_exists = cur.fetchone() is not None
         
+        # Build the query
         if side_column_exists:
-            query += ", side"
+            # Include side column in the select list
+            columns_to_select = base_columns + ["side"]
             
-        query += f"""
-        FROM {table_name}
-        WHERE {where_clause}
-        ORDER BY date DESC
-        """
+            # If last_n is provided, we need to get only the most recent N games per goalie
+            if last_n is not None:
+                # Use window function to get the most recent N games per goalie
+                partition_by = "player"
+                
+                # Only include side in the partition if it's specified
+                if side in ['home', 'away']:
+                    partition_by += ", side"
+                
+                query = f"""
+                WITH ranked_games AS (
+                    SELECT 
+                        {', '.join(columns_to_select)},
+                        ROW_NUMBER() OVER (PARTITION BY {partition_by} ORDER BY date DESC) as row_num
+                    FROM {table_name}
+                    WHERE {where_clause}
+                )
+                SELECT {', '.join(columns_to_select)}
+                FROM ranked_games
+                WHERE row_num <= {last_n}
+                ORDER BY player, date DESC
+                """
+            else:
+                # No last_n, but we still need to handle duplicates if side is not specified
+                if side not in ['home', 'away']:
+                    # Get distinct player-date combinations to avoid duplicates
+                    query = f"""
+                    WITH ranked_records AS (
+                        SELECT 
+                            {', '.join(columns_to_select)},
+                            ROW_NUMBER() OVER (PARTITION BY date, player ORDER BY date DESC) as row_num
+                        FROM {table_name}
+                        WHERE {where_clause}
+                    )
+                    SELECT {', '.join(columns_to_select)}
+                    FROM ranked_records
+                    WHERE row_num = 1
+                    ORDER BY date DESC
+                    """
+                else:
+                    # Side is specified, use normal query
+                    query = f"""
+                    SELECT {', '.join(columns_to_select)}
+                    FROM {table_name}
+                    WHERE {where_clause}
+                    ORDER BY date DESC
+                    """
+        else:
+            # Side column doesn't exist
+            # If last_n is provided, we need to get only the most recent N games per goalie
+            if last_n is not None:
+                query = f"""
+                WITH ranked_games AS (
+                    SELECT 
+                        {', '.join(base_columns)},
+                        ROW_NUMBER() OVER (PARTITION BY player ORDER BY date DESC) as row_num
+                    FROM {table_name}
+                    WHERE {where_clause}
+                )
+                SELECT {', '.join(base_columns)}
+                FROM ranked_games
+                WHERE row_num <= {last_n}
+                ORDER BY player, date DESC
+                """
+            else:
+                # No last_n, use normal query
+                query = f"""
+                SELECT {', '.join(base_columns)}
+                FROM {table_name}
+                WHERE {where_clause}
+                ORDER BY date DESC
+                """
         
         # Execute query
         cur.execute(query, params)
@@ -294,15 +318,7 @@ def get_goalie_stats(
     except Exception as e:
         logger.error(f"Error retrieving goalie stats: {e}")
         # Return an empty DataFrame with the expected columns if there's an error
-        columns = [
-            'date', 'player', 'team', 'toi', 'shots_against', 'saves',
-            'goals_against', 'sv_pct', 'gaa', 'gsaa', 'xg_against',
-            'hd_shots_against', 'hd_saves', 'hd_goals_against', 'hdsv_pct',
-            'md_shots_against', 'md_saves', 'md_goals_against', 'mdsv_pct',
-            'ld_shots_against', 'ld_saves', 'ld_goals_against', 'ldsv_pct',
-            'rush_attempts_against', 'rebound_attempts_against',
-            'avg_shot_distance', 'avg_goal_distance'
-        ]
+        columns = base_columns
         
         # Add side column to expected columns if it exists
         if conn and side_column_exists:
