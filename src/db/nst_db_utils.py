@@ -133,7 +133,7 @@ def get_goalie_stats(
     end_date: Optional[str] = None,
     last_n: Optional[int] = None,
     db_prefix: str = "NST_DB_",
-    table_name: str = "goalie_stats_all",
+    situation: str = "all",
     side: Optional[str] = None
 ) -> pd.DataFrame:
     """
@@ -146,11 +146,21 @@ def get_goalie_stats(
         end_date: Optional end date for date range
         last_n: Optional number of most recent games to return per goalie
         db_prefix: Database environment variable prefix
-        table_name: Name of the table to query (default: "goalie_stats_all")
+        situation: The game situation to query ('all', '5v5', or 'pk'). Determines which table to use.
         side: Optional filter for home/away games ('home', 'away', or None for both)
     Returns:
         DataFrame containing goalie statistics
     """
+    # Determine table name based on situation
+    if situation == "all":
+        table_name = "goalie_stats_all"
+    elif situation == "5v5":
+        table_name = "goalie_stats_5v5"
+    elif situation == "pk":
+        table_name = "goalie_stats_pk"
+    else:
+        raise ValueError(f"Invalid situation: {situation}. Must be one of: 'all', '5v5', 'pk'")
+    
     conditions = []
     params = []
     
