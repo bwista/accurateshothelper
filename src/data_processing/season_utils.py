@@ -56,7 +56,12 @@ NHL_SEASONS = {
         'start': '2014-10-08',
         'regular_end': '2015-04-12',
         'playoff_end': '2015-06-15'
-    }     
+    },     
+    20132014: {
+        'start': '2013-10-01',
+        'regular_end': '2014-04-13',
+        'playoff_end': '2014-06-15'
+    },     
 }
 
 def get_season_end_date(season, stype=2):
