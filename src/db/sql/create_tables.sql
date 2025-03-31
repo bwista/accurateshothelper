@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_players_current_team ON players(current_team_id);
 -- Create The Odds Database Tables
 
 -- Game Information Table
-CREATE TABLE IF NOT EXISTS public.game_info (
+CREATE TABLE IF NOT EXISTS public.nhl_game_info (
     id VARCHAR(50) PRIMARY KEY,
     sport_key VARCHAR(50) NOT NULL,
     sport_title VARCHAR(50) NOT NULL,
@@ -35,12 +35,12 @@ CREATE TABLE IF NOT EXISTS public.game_info (
     last_updated TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indices for game_info table
-CREATE INDEX IF NOT EXISTS idx_game_info_commence_time ON game_info(commence_time);
-CREATE INDEX IF NOT EXISTS idx_game_info_teams ON game_info(home_team, away_team);
+-- Create indices for nhl_game_info table
+CREATE INDEX IF NOT EXISTS idx_nhl_game_info_commence_time ON nhl_game_info(commence_time);
+CREATE INDEX IF NOT EXISTS idx_nhl_game_info_teams ON nhl_game_info(home_team, away_team);
 
 -- Moneyline Odds Table
-CREATE TABLE IF NOT EXISTS public.moneyline_odds (
+CREATE TABLE IF NOT EXISTS public.nhl_moneyline_odds (
     game_id VARCHAR(50) NOT NULL,
     sportsbook VARCHAR(50) NOT NULL,
     team_name VARCHAR(100) NOT NULL,
@@ -48,16 +48,16 @@ CREATE TABLE IF NOT EXISTS public.moneyline_odds (
     last_update TIMESTAMP WITH TIME ZONE NOT NULL,
     scraped_at TIMESTAMP WITH TIME ZONE NOT NULL,
     PRIMARY KEY (game_id, sportsbook, team_name),
-    FOREIGN KEY (game_id) REFERENCES game_info(id)
+    FOREIGN KEY (game_id) REFERENCES nhl_game_info(id)
 );
 
--- Create indices for moneyline_odds table
-CREATE INDEX IF NOT EXISTS idx_moneyline_odds_game ON moneyline_odds(game_id);
-CREATE INDEX IF NOT EXISTS idx_moneyline_odds_sportsbook ON moneyline_odds(sportsbook);
-CREATE INDEX IF NOT EXISTS idx_moneyline_odds_last_update ON moneyline_odds(last_update);
+-- Create indices for nhl_moneyline_odds table
+CREATE INDEX IF NOT EXISTS idx_nhl_moneyline_odds_game ON nhl_moneyline_odds(game_id);
+CREATE INDEX IF NOT EXISTS idx_nhl_moneyline_odds_sportsbook ON nhl_moneyline_odds(sportsbook);
+CREATE INDEX IF NOT EXISTS idx_nhl_moneyline_odds_last_update ON nhl_moneyline_odds(last_update);
 
 -- Player Shots on Goal Odds Table
-CREATE TABLE IF NOT EXISTS public.player_sog_odds (
+CREATE TABLE IF NOT EXISTS public.nhl_player_sog_odds (
     game_id VARCHAR(50) NOT NULL,
     sportsbook VARCHAR(50) NOT NULL,
     player_name VARCHAR(200) NOT NULL,
@@ -67,17 +67,17 @@ CREATE TABLE IF NOT EXISTS public.player_sog_odds (
     last_update TIMESTAMP WITH TIME ZONE NOT NULL,
     scraped_at TIMESTAMP WITH TIME ZONE NOT NULL,
     PRIMARY KEY (game_id, sportsbook, player_name, market_type, handicap),
-    FOREIGN KEY (game_id) REFERENCES game_info(id)
+    FOREIGN KEY (game_id) REFERENCES nhl_game_info(id)
 );
 
--- Create indices for player_sog_odds table
-CREATE INDEX IF NOT EXISTS idx_player_sog_odds_game ON player_sog_odds(game_id);
-CREATE INDEX IF NOT EXISTS idx_player_sog_odds_player ON player_sog_odds(player_name);
-CREATE INDEX IF NOT EXISTS idx_player_sog_odds_sportsbook ON player_sog_odds(sportsbook);
-CREATE INDEX IF NOT EXISTS idx_player_sog_odds_last_update ON player_sog_odds(last_update);
+-- Create indices for nhl_player_sog_odds table
+CREATE INDEX IF NOT EXISTS idx_nhl_player_sog_odds_game ON nhl_player_sog_odds(game_id);
+CREATE INDEX IF NOT EXISTS idx_nhl_player_sog_odds_player ON nhl_player_sog_odds(player_name);
+CREATE INDEX IF NOT EXISTS idx_nhl_player_sog_odds_sportsbook ON nhl_player_sog_odds(sportsbook);
+CREATE INDEX IF NOT EXISTS idx_nhl_player_sog_odds_last_update ON nhl_player_sog_odds(last_update);
 
 -- Player Saves Odds Table
-CREATE TABLE IF NOT EXISTS public.player_saves_odds (
+CREATE TABLE IF NOT EXISTS public.nhl_player_saves_odds (
     game_id VARCHAR(50) NOT NULL,
     sportsbook VARCHAR(50) NOT NULL,
     player_name VARCHAR(200) NOT NULL,
@@ -87,14 +87,55 @@ CREATE TABLE IF NOT EXISTS public.player_saves_odds (
     last_update TIMESTAMP WITH TIME ZONE NOT NULL,
     scraped_at TIMESTAMP WITH TIME ZONE NOT NULL,
     PRIMARY KEY (game_id, sportsbook, player_name, market_type, handicap),
-    FOREIGN KEY (game_id) REFERENCES game_info(id)
+    FOREIGN KEY (game_id) REFERENCES nhl_game_info(id)
 );
 
--- Create indices for player_saves_odds table
-CREATE INDEX IF NOT EXISTS idx_player_saves_odds_game ON player_saves_odds(game_id);
-CREATE INDEX IF NOT EXISTS idx_player_saves_odds_player ON player_saves_odds(player_name);
-CREATE INDEX IF NOT EXISTS idx_player_saves_odds_sportsbook ON player_saves_odds(sportsbook);
-CREATE INDEX IF NOT EXISTS idx_player_saves_odds_last_update ON player_saves_odds(last_update);
+-- Create indices for nhl_player_saves_odds table
+CREATE INDEX IF NOT EXISTS idx_nhl_player_saves_odds_game ON nhl_player_saves_odds(game_id);
+CREATE INDEX IF NOT EXISTS idx_nhl_player_saves_odds_player ON nhl_player_saves_odds(player_name);
+CREATE INDEX IF NOT EXISTS idx_nhl_player_saves_odds_sportsbook ON nhl_player_saves_odds(sportsbook);
+CREATE INDEX IF NOT EXISTS idx_nhl_player_saves_odds_last_update ON nhl_player_saves_odds(last_update);
+
+-- Create MLB Database Tables
+
+-- MLB Game Information Table
+CREATE TABLE IF NOT EXISTS public.mlb_game_info (
+    id VARCHAR(50) PRIMARY KEY,
+    sport_key VARCHAR(50) NOT NULL,
+    sport_title VARCHAR(50) NOT NULL,
+    home_team VARCHAR(100) NOT NULL,
+    away_team VARCHAR(100) NOT NULL,
+    commence_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    last_updated TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indices for mlb_game_info table
+CREATE INDEX IF NOT EXISTS idx_mlb_game_info_commence_time ON mlb_game_info(commence_time);
+CREATE INDEX IF NOT EXISTS idx_mlb_game_info_teams ON mlb_game_info(home_team, away_team);
+
+-- Pitcher Strikeout Odds Table
+CREATE TABLE IF NOT EXISTS public.mlb_pitcher_strikeouts (
+    game_id VARCHAR(50) NOT NULL,
+    sportsbook VARCHAR(50) NOT NULL,
+    player_name VARCHAR(200) NOT NULL,
+    market_type VARCHAR(50) NOT NULL,
+    handicap NUMERIC(4,1) NOT NULL,
+    price INTEGER NOT NULL,
+    last_update TIMESTAMP WITH TIME ZONE NOT NULL,
+    scraped_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    PRIMARY KEY (game_id, sportsbook, player_name, market_type, handicap),
+    FOREIGN KEY (game_id) REFERENCES mlb_game_info(id)
+);
+
+-- Create indices for mlb_pitcher_strikeouts table
+CREATE INDEX IF NOT EXISTS idx_mlb_pitcher_strikeouts_game ON mlb_pitcher_strikeouts(game_id);
+CREATE INDEX IF NOT EXISTS idx_mlb_pitcher_strikeouts_player ON mlb_pitcher_strikeouts(player_name);
+CREATE INDEX IF NOT EXISTS idx_mlb_pitcher_strikeouts_sportsbook ON mlb_pitcher_strikeouts(sportsbook);
+CREATE INDEX IF NOT EXISTS idx_mlb_pitcher_strikeouts_last_update ON mlb_pitcher_strikeouts(last_update);
+
+-- Add comments to MLB tables
+COMMENT ON TABLE public.mlb_game_info IS 'Basic game information from The Odds API for MLB games';
+COMMENT ON TABLE public.mlb_pitcher_strikeouts IS 'Pitcher strikeout betting odds for MLB games';
 
 -- Create Prop Odds Database Tables
 
@@ -273,10 +314,10 @@ CREATE INDEX IF NOT EXISTS idx_goalie_stats_pk_season ON goalie_stats_pk(season)
 
 -- Add comments to tables and columns
 COMMENT ON TABLE public.players IS 'NHL player information and current team details';
-COMMENT ON TABLE public.game_info IS 'Basic game information from The Odds API';
-COMMENT ON TABLE public.moneyline_odds IS 'Moneyline (head-to-head) betting odds for NHL games';
-COMMENT ON TABLE public.player_sog_odds IS 'Player shots on goal betting odds for NHL games';
-COMMENT ON TABLE public.player_saves_odds IS 'Player saves betting odds for NHL games';
+COMMENT ON TABLE public.nhl_game_info IS 'Basic game information from The Odds API';
+COMMENT ON TABLE public.nhl_moneyline_odds IS 'Moneyline (head-to-head) betting odds for NHL games';
+COMMENT ON TABLE public.nhl_player_sog_odds IS 'Player shots on goal betting odds for NHL games';
+COMMENT ON TABLE public.nhl_player_saves_odds IS 'Player saves betting odds for NHL games';
 COMMENT ON TABLE public.prop_game_info IS 'Game information for prop betting odds';
 COMMENT ON TABLE public.player_shots_ou IS 'Player shots over/under prop betting odds';
 COMMENT ON TABLE public.goalie_stats_5v5 IS 'NHL goalie statistics at 5v5 play including high, medium, and low danger metrics';
