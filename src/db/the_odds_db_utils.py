@@ -1730,6 +1730,25 @@ def process_strikeout_markets(game_id, query_date=None, enable_logging=False):
     # Get the markets data from the API
     response_data = get_request(url)
     
+    # Handle None response
+    if response_data is None:
+        if enable_logging:
+            logging.warning(f"No response data received for game {game_id}")
+        return
+    
+    # Check for specific error responses
+    if isinstance(response_data, dict):
+        if 'error_code' in response_data:
+            error_code = response_data.get('error_code')
+            error_message = response_data.get('message', 'Unknown error')
+            if error_code == 'EVENT_NOT_FOUND':
+                if enable_logging:
+                    logging.warning(f"Game {game_id} not found - it may have been postponed or cancelled: {error_message}")
+            else:
+                if enable_logging:
+                    logging.error(f"API error for game {game_id}: {error_message}")
+            return
+    
     # For historical odds, the actual odds data is nested in the 'data' field
     markets_data = response_data.get('data', response_data) if use_historical else response_data
 
@@ -1767,7 +1786,8 @@ def process_strikeout_markets(game_id, query_date=None, enable_logging=False):
         """
 
         # Process bookmakers and their markets
-        records_to_insert = []
+        # Use a dictionary to store the most recent record for each unique key
+        unique_records = {}
         for bookmaker in markets_data['bookmakers']:
             sportsbook = bookmaker['key']
             last_update = bookmaker['last_update']  # Get bookmaker's last_update
@@ -1782,6 +1802,8 @@ def process_strikeout_markets(game_id, query_date=None, enable_logging=False):
                     handicap = float(outcome['point'])  # Using point for handicap
                     price = int(outcome['price'])  # American odds format
 
+                    # Create a unique key for this record
+                    unique_key = (game_id, sportsbook, player_name, market_type, handicap)
                     record = (
                         game_id,
                         sportsbook,
@@ -1792,7 +1814,13 @@ def process_strikeout_markets(game_id, query_date=None, enable_logging=False):
                         last_update,
                         current_time  # Add scraped_at timestamp
                     )
-                    records_to_insert.append(record)
+
+                    # Only keep the record with the most recent last_update
+                    if unique_key not in unique_records or last_update > unique_records[unique_key][6]:
+                        unique_records[unique_key] = record
+
+        # Convert the dictionary values to a list
+        records_to_insert = list(unique_records.values())
 
         if records_to_insert:
             # Use execute_values for efficient bulk insertion
